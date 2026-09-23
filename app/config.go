@@ -29,6 +29,17 @@ type Config struct {
 	Storage string
 	DB      DBConfig
 
+	// ReleaseState приходит из аннотации шаблона пода (Downward API).
+	// "broken-*" — под изображает сломанный релиз и не проходит readiness.
+	ReleaseState string
+
+	// AccessLogPath — куда писать access-лог для sidecar-контейнера (пусто — не писать).
+	AccessLogPath string
+
+	// Headless-сервис DaemonSet'а node-agent и порт агентов.
+	NodeAgentService string
+	NodeAgentPort    string
+
 	// ShutdownDelay — сколько ждать после SIGTERM, прежде чем перестать принимать
 	// запросы. За это время Kubernetes успевает убрать под из endpoints сервиса.
 	ShutdownDelay time.Duration
@@ -78,6 +89,11 @@ func loadConfig() Config {
 			Name:     env("DB_NAME", "demo"),
 			SSLMode:  env("DB_SSLMODE", "disable"),
 		},
+
+		ReleaseState:     os.Getenv("RELEASE_STATE"),
+		AccessLogPath:    os.Getenv("ACCESS_LOG"),
+		NodeAgentService: env("NODE_AGENT_SERVICE", "node-agent"),
+		NodeAgentPort:    env("NODE_AGENT_PORT", "9100"),
 
 		ShutdownDelay: envDuration("SHUTDOWN_DELAY", 5*time.Second),
 	}

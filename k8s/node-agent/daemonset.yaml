@@ -1,0 +1,90 @@
+# DaemonSet: ровно один под-агент на КАЖДОЙ ноде (новая нода -> новый агент).
+# Тот же образ, что и у приложения, но команда `kube-demo agent`.
+# Агент отдаёт инфо о своей ноде: ядро, CPU, load average, память, аптайм.
+# Приложение находит агентов через DNS headless-сервиса (блок «Ноды» в UI).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-agent
+  labels:
+    app: node-agent
+spec:
+  selector:
+    matchLabels:
+      app: node-agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: node-agent
+    spec:
+      # Control-plane нода помечена taint'ом NoSchedule: обычные поды туда не
+      # попадают. Toleration разрешает агенту жить и там — видно все ноды.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: kube-demo:1.0.0
+          imagePullPolicy: IfNotPresent
+          args: ["agent"]
+          ports:
+            - name: agent
+              containerPort: 9100
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: agent
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: agent
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+# Headless: DNS-имя node-agent возвращает IP всех агентов сразу.
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-agent
+  labels:
+    app: node-agent
+spec:
+  clusterIP: None
+  selector:
+    app: node-agent
+  ports:
+    - name: agent
+      port: 9100
+      targetPort: agent

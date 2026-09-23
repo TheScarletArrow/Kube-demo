@@ -1,0 +1,18 @@
+# Traefik как реализация Gateway API (make gateway-install).
+# Чарт сам создаёт GatewayClass "traefik" и Gateway "traefik-gateway" в namespace traefik;
+# наши HTTPRoute цепляются к нему из namespace kube-demo.
+providers:
+  kubernetesGateway:
+    enabled: true
+  kubernetesIngress:
+    enabled: true # заодно работает и классический Ingress (k8s/extras/ingress.yaml)
+gateway:
+  listeners:
+    web:
+      namespacePolicy:
+        from: All # принимать HTTPRoute из любых namespace
+service:
+  type: NodePort # в kind нет LoadBalancer'а
+ports:
+  web:
+    nodePort: 30081 # -> http://localhost:30081 (проброшен в kind-config.yaml)

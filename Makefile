@@ -6,7 +6,8 @@ URL     ?= http://localhost:30080
 
 .DEFAULT_GOAL := help
 .PHONY: help up down test run build kind-up kind-down load deploy undeploy status logs watch \
-        smoke zero-downtime persistence v2 metrics-server hpa-on hpa-off
+        smoke zero-downtime persistence features v2 metrics-server hpa-on hpa-off \
+        netpol-on netpol-off quota-on quota-off prometheus gateway-install gateway-on backup
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -73,6 +74,41 @@ v2: ## Собрать образ 2.0.0 и выкатить его rolling update
 	kubectl -n $(NS) set image deployment/kube-demo app=$(IMAGE):2.0.0
 	kubectl -n $(NS) annotate deployment/kube-demo kubernetes.io/change-cause="image $(IMAGE):2.0.0" --overwrite
 	kubectl -n $(NS) rollout status deployment/kube-demo
+
+features: ## E2E всех «продвинутых» фич (или одной: make features F=oom)
+	./scripts/features-test.sh $(or $(F),all)
+
+netpol-on: ## NetworkPolicy: к базе только поды с меткой postgres-access=true
+	kubectl apply -f k8s/extras/network-policy.yaml
+
+netpol-off: ## Убрать NetworkPolicy
+	kubectl delete -f k8s/extras/network-policy.yaml --ignore-not-found
+
+quota-on: ## ResourceQuota + LimitRange на namespace
+	kubectl apply -f k8s/extras/quota.yaml
+
+quota-off: ## Убрать квоты
+	kubectl delete -f k8s/extras/quota.yaml --ignore-not-found
+
+backup: ## Запустить бэкап Postgres прямо сейчас (Job из CronJob)
+	kubectl -n $(NS) create job backup-$$(date +%s) --from=cronjob/postgres-backup
+
+prometheus: ## Prometheus с автопоиском подов -> http://localhost:30090
+	kubectl apply -f k8s/extras/observability/prometheus.yaml
+	kubectl -n $(NS) rollout status deployment/prometheus --timeout=180s
+
+GATEWAY_API ?= v1.4.0
+TRAEFIK_CHART ?= 41.6.0
+
+gateway-install: ## CRD Gateway API + Traefik (helm) -> http://localhost:30081
+	kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API)/standard-install.yaml
+	helm repo add traefik https://traefik.github.io/charts
+	helm upgrade --install traefik traefik/traefik --version $(TRAEFIK_CHART) -n traefik --create-namespace \
+		-f k8s/extras/gateway/traefik-values.yaml --wait
+
+gateway-on: ## Canary-версия + HTTPRoute 80/20
+	kubectl apply -f k8s/extras/gateway/canary.yaml -f k8s/extras/gateway/httproute.yaml
+	kubectl -n $(NS) rollout status deployment/kube-demo-canary --timeout=180s
 
 metrics-server: ## Поставить metrics-server в kind (нужен для HPA и kubectl top)
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

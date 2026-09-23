@@ -57,23 +57,54 @@ func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
 
 		switch {
 		case r.Method == "GET" && r.URL.Path == nsApps+"/deployments/kube-demo":
-			fmt.Fprint(w, `{"metadata":{"name":"kube-demo"},"spec":{"replicas":3},
-				"status":{"replicas":4,"readyReplicas":2,"updatedReplicas":1,"availableReplicas":2}}`)
+			fmt.Fprint(w, `{"metadata":{"name":"kube-demo","annotations":{"deployment.kubernetes.io/revision":"3"}},
+				"spec":{"replicas":3,"template":{"metadata":{"annotations":{"kube-demo/release":"broken-1"}}}},
+				"status":{"replicas":4,"readyReplicas":2,"updatedReplicas":1,"availableReplicas":2,
+				  "conditions":[{"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}]}}`)
+		case r.Method == "PUT" && r.URL.Path == nsApps+"/deployments/kube-demo":
+			fmt.Fprint(w, `{}`)
 		case r.Method == "GET" && r.URL.Path == nsApps+"/replicasets":
 			if r.URL.Query().Get("labelSelector") != "app=kube-demo" {
 				t.Errorf("unexpected labelSelector %q", r.URL.RawQuery)
 			}
 			fmt.Fprint(w, `{"items":[
 				{"metadata":{"name":"kube-demo-old","creationTimestamp":"2026-01-01T00:00:00Z",
-				  "annotations":{"deployment.kubernetes.io/revision":"1"}},"spec":{"replicas":1},"status":{"replicas":2,"readyReplicas":2}},
-				{"metadata":{"name":"kube-demo-new","creationTimestamp":"2026-01-02T00:00:00Z",
-				  "annotations":{"deployment.kubernetes.io/revision":"2"}},"spec":{"replicas":2},"status":{"replicas":1}}]}`)
+				  "annotations":{"deployment.kubernetes.io/revision":"1"}},"spec":{"replicas":0,
+				  "template":{"metadata":{"labels":{"app":"kube-demo","pod-template-hash":"old"}}}},"status":{}},
+				{"metadata":{"name":"kube-demo-broken","creationTimestamp":"2026-01-03T00:00:00Z",
+				  "annotations":{"deployment.kubernetes.io/revision":"3"}},"spec":{"replicas":1,
+				  "template":{"metadata":{"labels":{"app":"kube-demo","pod-template-hash":"broken"},
+				    "annotations":{"kube-demo/release":"broken-1"}}}},"status":{"replicas":1}},
+				{"metadata":{"name":"kube-demo-good","creationTimestamp":"2026-01-02T00:00:00Z",
+				  "annotations":{"deployment.kubernetes.io/revision":"2"}},"spec":{"replicas":3,
+				  "template":{"metadata":{"labels":{"app":"kube-demo","pod-template-hash":"good"}},
+				    "spec":{"containers":[{"name":"app","image":"kube-demo:1.0.0"}]}}},"status":{"replicas":3,"readyReplicas":3}}]}`)
+		case r.Method == "GET" && r.URL.Path == "/api/v1/namespaces/demo/events":
+			fmt.Fprint(w, `{"items":[
+				{"type":"Normal","reason":"Scheduled","message":"old","lastTimestamp":"2026-01-01T00:00:00Z",
+				 "involvedObject":{"kind":"Pod","name":"a"}},
+				{"type":"Warning","reason":"FailedCreate","message":"exceeded quota","count":4,
+				 "lastTimestamp":"2026-01-02T00:00:00Z","involvedObject":{"kind":"ReplicaSet","name":"kube-demo-good"}}]}`)
+		case r.Method == "GET" && r.URL.Path == "/apis/batch/v1/namespaces/demo/jobs":
+			fmt.Fprint(w, `{"items":[
+				{"metadata":{"name":"postgres-backup-1"},"status":{"succeeded":1,
+				 "startTime":"2026-01-01T00:00:00Z","completionTime":"2026-01-01T00:00:07Z"}},
+				{"metadata":{"name":"postgres-backup-manual-2","annotations":{"cronjob.kubernetes.io/instantiate":"manual"}},
+				 "status":{"active":1,"startTime":"2026-01-02T00:00:00Z"}}]}`)
+		case r.Method == "GET" && r.URL.Path == "/apis/batch/v1/namespaces/demo/cronjobs/postgres-backup":
+			fmt.Fprint(w, `{"metadata":{"name":"postgres-backup","uid":"cj-uid"},
+				"spec":{"schedule":"*/5 * * * *","jobTemplate":{"metadata":{"labels":{"app":"postgres-backup"}},
+				  "spec":{"template":{"spec":{"containers":[{"name":"backup"}]}}}}}}`)
+		case r.Method == "POST" && r.URL.Path == "/apis/batch/v1/namespaces/demo/jobs":
+			fmt.Fprint(w, `{}`)
 		case r.Method == "GET" && r.URL.Path == nsPods:
 			var items []string
 			for _, p := range f.pods {
 				items = append(items, p)
 			}
 			fmt.Fprintf(w, `{"items":[%s]}`, strings.Join(items, ","))
+		case r.Method == "PATCH" && strings.HasSuffix(r.URL.Path, "/resize"):
+			fmt.Fprint(w, `{}`)
 		case strings.HasPrefix(r.URL.Path, nsPods+"/"):
 			name := strings.TrimPrefix(r.URL.Path, nsPods+"/")
 			pod, ok := f.pods[name]
@@ -130,8 +161,22 @@ func TestClusterState(t *testing.T) {
 	if d := got.Deployment; d.Desired != 3 || d.Current != 4 || d.Ready != 2 || d.Updated != 1 {
 		t.Errorf("deployment: %+v", d)
 	}
-	if len(got.ReplicaSets) != 2 || got.ReplicaSets[0].Name != "kube-demo-new" || got.ReplicaSets[0].Revision != "2" {
-		t.Errorf("replicasets should be newest first: %+v", got.ReplicaSets)
+	if len(got.ReplicaSets) != 3 || got.ReplicaSets[0].Name != "kube-demo-broken" || got.ReplicaSets[0].Release != "broken-1" {
+		t.Errorf("replicasets should be sorted by revision, newest first: %+v", got.ReplicaSets)
+	}
+	if d := got.Deployment; d.Revision != "3" || d.Release != "broken-1" ||
+		len(d.Conditions) != 1 || d.Conditions[0].Reason != "ProgressDeadlineExceeded" {
+		t.Errorf("deployment rollout info: %+v", d)
+	}
+	if len(got.Events) != 2 || got.Events[0].Reason != "FailedCreate" || got.Events[0].Object != "replicaset/kube-demo-good" {
+		t.Errorf("events should be newest first: %+v", got.Events)
+	}
+	if len(got.Jobs) != 2 || got.Jobs[0].Status != "Running" || !got.Jobs[0].Manual ||
+		got.Jobs[1].Status != "Complete" || got.Jobs[1].Duration != "7s" {
+		t.Errorf("jobs: %+v", got.Jobs)
+	}
+	if got.CronJob == nil || got.CronJob.Schedule != "*/5 * * * *" {
+		t.Errorf("cronjob: %+v", got.CronJob)
 	}
 
 	want := map[string]string{ // как колонка STATUS у kubectl get pods
@@ -280,6 +325,111 @@ func TestPodStatusJSONRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v := toPodView(p); v.Restarts != 1 || v.Status != "Pending" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestRolloutUndoUsesPreviousRevisionTemplate(t *testing.T) {
+	f, h := newKubeTestServer(t)
+
+	rec := do(t, h, "POST", "/api/k8s/undo", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("undo: %d %s", rec.Code, rec.Body)
+	}
+	if rev := decode[struct{ ToRevision string }](t, rec).ToRevision; rev != "2" {
+		t.Fatalf("should roll back to revision 2 (the one before current 3), got %q", rev)
+	}
+	req := f.last()
+	if !strings.HasPrefix(req, "PUT "+nsApps+"/deployments/kube-demo application/json") {
+		t.Fatalf("unexpected request: %s", req)
+	}
+	// Шаблон ревизии 2: без аннотации сломанного релиза и без pod-template-hash.
+	for _, bad := range []string{"broken-1", "pod-template-hash"} {
+		if strings.Contains(req, bad) {
+			t.Errorf("template must not contain %q: %s", bad, req)
+		}
+	}
+	if !strings.Contains(req, "kube-demo:1.0.0") {
+		t.Errorf("template of revision 2 expected: %s", req)
+	}
+}
+
+func TestBreakRelease(t *testing.T) {
+	f, h := newKubeTestServer(t)
+	if rec := do(t, h, "POST", "/api/k8s/break", ""); rec.Code != http.StatusOK {
+		t.Fatalf("break: %d %s", rec.Code, rec.Body)
+	}
+	if got := f.last(); !strings.Contains(got, `"kube-demo/release":"broken-`) {
+		t.Errorf("unexpected request: %s", got)
+	}
+}
+
+func TestResizeCPU(t *testing.T) {
+	f, h := newKubeTestServer(t)
+
+	for _, bad := range []string{`{"limitMilli":50}`, `{"limitMilli":5000}`, `{}`} {
+		if rec := do(t, h, "PUT", "/api/k8s/pods/kube-demo-abc-1/cpu", bad); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", bad, rec.Code)
+		}
+	}
+	if rec := do(t, h, "PUT", "/api/k8s/pods/postgres-0/cpu", `{"limitMilli":1000}`); rec.Code != http.StatusForbidden {
+		t.Errorf("postgres resize: got %d, want 403", rec.Code)
+	}
+
+	rec := do(t, h, "PUT", "/api/k8s/pods/kube-demo-abc-1/cpu", `{"limitMilli":1000}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resize: %d %s", rec.Code, rec.Body)
+	}
+	want := `PATCH ` + nsPods + `/kube-demo-abc-1/resize application/strategic-merge-patch+json ` +
+		`{"spec":{"containers":[{"name":"app","resources":{"limits":{"cpu":"1000m"},"requests":{"cpu":"50m"}}}]}}`
+	if got := f.last(); got != want {
+		t.Errorf("request:\n got %s\nwant %s", got, want)
+	}
+
+	// Лимит ниже requests: requests опускается до лимита.
+	do(t, h, "PUT", "/api/k8s/pods/kube-demo-abc-1/cpu", `{"limitMilli":100}`)
+	if got := f.last(); !strings.Contains(got, `"limits":{"cpu":"100m"},"requests":{"cpu":"50m"}`) {
+		t.Errorf("unexpected request: %s", got)
+	}
+}
+
+func TestRunBackupCreatesJobFromCronJob(t *testing.T) {
+	f, h := newKubeTestServer(t)
+	rec := do(t, h, "POST", "/api/k8s/backup", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("backup: %d %s", rec.Code, rec.Body)
+	}
+	got := f.last()
+	for _, want := range []string{
+		"POST /apis/batch/v1/namespaces/demo/jobs",
+		`"cronjob.kubernetes.io/instantiate":"manual"`,
+		`"uid":"cj-uid"`,
+		`"name":"backup"`,
+		`"name":"postgres-backup-manual-`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("job request should contain %s: %s", want, got)
+		}
+	}
+}
+
+func TestPodViewSidecarAndLastState(t *testing.T) {
+	var p k8sPod
+	raw := `{"metadata":{"name":"x"},
+		"spec":{"initContainers":[{"name":"wait"},{"name":"access-log","restartPolicy":"Always"}],
+		        "containers":[{"name":"app","resources":{"requests":{"cpu":"50m"},"limits":{"cpu":"500m"}}}]},
+		"status":{"phase":"Running",
+		  "conditions":[{"type":"PodResizeInProgress","status":"True"}],
+		  "initContainerStatuses":[
+		    {"name":"wait","state":{"terminated":{"reason":"Completed"}}},
+		    {"name":"access-log","ready":true,"state":{"running":{}}}],
+		  "containerStatuses":[{"name":"app","ready":true,"restartCount":1,"state":{"running":{}},
+		    "lastState":{"terminated":{"reason":"OOMKilled","exitCode":137,"finishedAt":"2026-01-01T00:00:00Z"}}}]}}`
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	v := toPodView(p)
+	if v.Status != "Running" || v.Ready != "2/2" || v.Last != "OOMKilled (137)" || v.CPU != "50m/500m" || v.Resize != "InProgress" {
 		t.Fatalf("%+v", v)
 	}
 }

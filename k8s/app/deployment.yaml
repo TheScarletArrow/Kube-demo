@@ -7,6 +7,10 @@ metadata:
 spec:
   replicas: 3
   revisionHistoryLimit: 5
+  # Если за 60 с rollout не продвинулся (новые поды не становятся Ready),
+  # Deployment получает условие Progressing=False / ProgressDeadlineExceeded.
+  # Откатывать Kubernetes сам не будет — это делает человек или CD.
+  progressDeadlineSeconds: 60
   selector:
     matchLabels:
       app: kube-demo
@@ -19,6 +23,12 @@ spec:
     metadata:
       labels:
         app: kube-demo
+        postgres-access: "true" # NetworkPolicy пускает к базе только поды с этой меткой
+      annotations:
+        # Prometheus (k8s/extras/observability) находит поды по этим аннотациям.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
     spec:
       # ServiceAccount с правами из rbac.yaml: приложение само умеет
       # scale / delete pod / rollout restart (кнопки в UI).
@@ -39,9 +49,38 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      # initContainer: основной контейнер не стартует, пока Postgres не начнёт
-      # принимать соединения. Статус пода в это время — Init:0/1.
+      volumes:
+        # Общий том приложения и sidecar'а: приложение пишет access-лог, sidecar читает.
+        - name: logs
+          emptyDir:
+            sizeLimit: 64Mi
+
       initContainers:
+        # Нативный sidecar (Kubernetes 1.29+): init-контейнер с restartPolicy: Always.
+        # Стартует ДО приложения, работает всё время жизни пода и останавливается
+        # ПОСЛЕ него — поэтому последние строки лога не теряются. READY пода: 2/2.
+        #   kubectl -n kube-demo logs <pod> -c access-log -f
+        - name: access-log
+          image: busybox:1.37
+          restartPolicy: Always
+          command: ["sh", "-c", "touch /var/log/app/access.log && exec tail -n0 -F /var/log/app/access.log"]
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/app
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 16Mi
+
+        # Обычный initContainer: приложение не стартует, пока Postgres не начнёт
+        # принимать соединения. Статус пода в это время — Init:1/2.
         - name: wait-for-postgres
           image: postgres:16-alpine
           command:
@@ -82,6 +121,14 @@ spec:
             - configMapRef:
                 name: kube-demo
           env:
+            # Сломанный релиз для демо: аннотация шаблона -> env (Downward API).
+            # Поды с RELEASE_STATE=broken-* никогда не проходят readiness.
+            - name: RELEASE_STATE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['kube-demo/release']
+            - name: ACCESS_LOG
+              value: /var/log/app/access.log
             # Downward API: Kubernetes сам рассказывает поду, кто он и где он.
             - name: POD_NAME
               valueFrom:
@@ -145,7 +192,17 @@ spec:
               memory: 32Mi
             limits:
               cpu: 500m
-              memory: 64Mi
+              memory: 64Mi # превышение -> OOMKilled (кнопка «OOM» в UI)
+          # In-place resize (Kubernetes 1.33+): CPU меняется у живого контейнера
+          # без рестарта, а смена памяти перезапускает только контейнер.
+          resizePolicy:
+            - resourceName: cpu
+              restartPolicy: NotRequired
+            - resourceName: memory
+              restartPolicy: RestartContainer
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/app
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

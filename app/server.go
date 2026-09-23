@@ -31,6 +31,8 @@ type server struct {
 	kube    *kubeClient // nil, если приложение запущено не в Kubernetes
 	started time.Time
 	exit    func(code int) // os.Exit, подменяется в тестах
+	metrics *metrics
+	access  *accessLog // nil, если access-лог не нужен
 
 	served       atomic.Int64 // запросов обслужено этим подом (без проб)
 	shuttingDown atomic.Bool  // получили SIGTERM
@@ -39,7 +41,7 @@ type server struct {
 }
 
 func newServer(cfg Config, store Store, exit func(int)) *server {
-	return &server{cfg: cfg, store: store, started: time.Now(), exit: exit}
+	return &server{cfg: cfg, store: store, started: time.Now(), exit: exit, metrics: newMetrics()}
 }
 
 func (s *server) routes() http.Handler {
@@ -56,6 +58,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/chaos/crash", s.handleCrash)
 	mux.HandleFunc("POST /api/chaos/sick", s.handleSick)
 	mux.HandleFunc("POST /api/chaos/unready", s.handleUnready)
+	mux.HandleFunc("POST /api/chaos/oom", s.handleOOM)
+	mux.HandleFunc("GET /api/nodes", s.handleNodes)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	s.kubeRoutes(mux)
 
@@ -65,7 +70,7 @@ func (s *server) routes() http.Handler {
 	return s.middleware(mux)
 }
 
-// middleware: логирование, подсчёт запросов и Connection: close.
+// middleware: логирование, метрики, access-лог, подсчёт запросов и Connection: close.
 //
 // Зачем Connection: close. kube-proxy балансирует СОЕДИНЕНИЯ, а не запросы.
 // Браузер держит keep-alive, и без этого заголовка все запросы со страницы
@@ -73,7 +78,7 @@ func (s *server) routes() http.Handler {
 // после каждого ответа. В проде так делать не нужно.
 func (s *server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -85,12 +90,21 @@ func (s *server) middleware(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 		next.ServeHTTP(rec, r)
+		elapsed := time.Since(start)
+
+		// r.Pattern заполняет ServeMux: "GET /api/hello" — низкая кардинальность для метрик.
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		s.metrics.observe(route, rec.status, elapsed)
+		s.access.write(r, rec.status, elapsed)
 
 		slog.Info("request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
-			"duration", time.Since(start).Round(time.Microsecond).String(),
+			"duration", elapsed.Round(time.Microsecond).String(),
 			"remote", r.RemoteAddr,
 		)
 	})
@@ -109,18 +123,20 @@ func (r *statusRecorder) WriteHeader(code int) {
 // ---------- основное API ----------
 
 type podInfo struct {
-	Pod       string    `json:"pod"`
-	Namespace string    `json:"namespace"`
-	PodIP     string    `json:"podIP"`
-	Node      string    `json:"node"`
-	Version   string    `json:"version"`
-	Color     string    `json:"color"`
-	Greeting  string    `json:"greeting"`
-	Storage   string    `json:"storage"`
-	KubeAPI   bool      `json:"kubeApi"`
-	StartedAt time.Time `json:"startedAt"`
-	Uptime    string    `json:"uptime"`
-	Served    int64     `json:"served"`
+	Pod       string       `json:"pod"`
+	Namespace string       `json:"namespace"`
+	PodIP     string       `json:"podIP"`
+	Node      string       `json:"node"`
+	Version   string       `json:"version"`
+	Color     string       `json:"color"`
+	Greeting  string       `json:"greeting"`
+	Storage   string       `json:"storage"`
+	KubeAPI   bool         `json:"kubeApi"`
+	Release   string       `json:"release"`
+	Limits    cgroupLimits `json:"limits"`
+	StartedAt time.Time    `json:"startedAt"`
+	Uptime    string       `json:"uptime"`
+	Served    int64        `json:"served"`
 }
 
 func (s *server) info() podInfo {
@@ -134,6 +150,8 @@ func (s *server) info() podInfo {
 		Greeting:  s.cfg.Greeting,
 		Storage:   s.store.Kind(),
 		KubeAPI:   s.kube != nil,
+		Release:   s.cfg.ReleaseState,
+		Limits:    readCgroupLimits(),
 		StartedAt: s.started,
 		Uptime:    time.Since(s.started).Round(time.Second).String(),
 		Served:    s.served.Load(),
@@ -287,6 +305,7 @@ func (s *server) handleBurn(w http.ResponseWriter, r *http.Request) {
 // POST /api/chaos/crash — процесс падает с exit 1. Смотрим, как растёт RESTARTS.
 func (s *server) handleCrash(w http.ResponseWriter, _ *http.Request) {
 	slog.Warn("crash requested via API, exiting with code 1")
+	s.metrics.action("crash")
 	writeJSON(w, http.StatusAccepted, map[string]any{"pod": s.cfg.PodName, "action": "crash"})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -301,6 +320,7 @@ func (s *server) handleCrash(w http.ResponseWriter, _ *http.Request) {
 // Через failureThreshold проб kubelet сам перезапустит контейнер.
 func (s *server) handleSick(w http.ResponseWriter, _ *http.Request) {
 	s.sick.Store(true)
+	s.metrics.action("sick")
 	slog.Warn("liveness probe will fail from now on")
 	writeJSON(w, http.StatusAccepted, map[string]any{"pod": s.cfg.PodName, "action": "sick"})
 }
@@ -316,6 +336,7 @@ func (s *server) handleUnready(w http.ResponseWriter, r *http.Request) {
 
 	until := time.Now().Add(time.Duration(sec) * time.Second)
 	s.unreadyUntil.Store(until.UnixNano())
+	s.metrics.action("unready")
 	slog.Warn("readiness probe will fail", "until", until.Format(time.RFC3339))
 	writeJSON(w, http.StatusAccepted, map[string]any{"pod": s.cfg.PodName, "action": "unready", "seconds": sec})
 }
@@ -335,14 +356,50 @@ func (s *server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // /readyz — readiness: «готов принимать трафик». Под с 503 убирается из
 // endpoints сервиса, но не перезапускается.
 func (s *server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	if reason := s.notReadyReason(); reason != "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": reason})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (s *server) brokenRelease() bool { return strings.HasPrefix(s.cfg.ReleaseState, "broken") }
+
+func (s *server) notReadyReason() string {
 	switch {
 	case s.shuttingDown.Load():
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "shutting down"})
+		return "shutting down"
+	case s.brokenRelease():
+		return "broken release"
 	case time.Now().UnixNano() < s.unreadyUntil.Load():
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unready (chaos)"})
-	default:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+		return "unready (chaos)"
 	}
+	return ""
+}
+
+// oomHog держит выделенную память, чтобы GC не мог её освободить.
+var oomHog [][]byte
+
+// POST /api/chaos/oom — съедаем память, пока ядро не убьёт контейнер
+// за превышение limits.memory: статус OOMKilled, exit code 137.
+func (s *server) handleOOM(w http.ResponseWriter, _ *http.Request) {
+	slog.Warn("OOM requested via API: allocating memory until the kernel kills us")
+	s.metrics.action("oom")
+	writeJSON(w, http.StatusAccepted, map[string]any{"pod": s.cfg.PodName, "action": "oom", "limits": readCgroupLimits()})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		for {
+			chunk := make([]byte, 4<<20)
+			for i := 0; i < len(chunk); i += 4096 {
+				chunk[i] = 1 // трогаем страницы, иначе ядро не выделит их на самом деле
+			}
+			oomHog = append(oomHog, chunk)
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 }
 
 // ---------- helpers ----------

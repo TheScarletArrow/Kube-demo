@@ -99,6 +99,12 @@
   .verdict.bad { display: block; border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
   .verdict.wait { display: block; border-color: #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
   button:disabled { opacity: .45; cursor: not-allowed; }
+  .banner { margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+  .banner.bad { border: 1px solid var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .banner.warn { border: 1px solid #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
+  .kt td.msg { white-space: normal; min-width: 260px; }
+  .badge.bad { color: var(--danger); border-color: currentColor; }
+  .links a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -107,6 +113,7 @@
     <h1>☸️ Kube Demo</h1>
     <span class="badge" id="version">v?</span>
     <span class="badge" id="storage">storage: ?</span>
+    <span class="badge bad" id="brokenBadge" hidden>сломанный релиз</span>
   </header>
 
   <section class="card hero">
@@ -119,6 +126,8 @@
       <div>Цвет версии<b><span class="swatch"></span><span id="color">-</span></b></div>
       <div>Аптайм пода<b id="uptime">-</b></div>
       <div>Визиты: под / всего<b id="visits">-</b></div>
+      <div title="Так лимиты видит сам контейнер (cgroup). Меняются при in-place resize без рестарта">
+        Лимиты (cgroup)<b id="limits">-</b></div>
     </div>
   </section>
 
@@ -149,19 +158,53 @@
         <input id="replicas" class="num" type="number" min="1" max="10" value="3" aria-label="Число реплик">
         <button id="scaleUp" title="Больше реплик">+</button>
         <button class="primary" id="scaleApply">Scale</button>
-        <button id="restart" title="Пересоздать все поды по одному">🔄 Rollout restart</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button id="restart" title="Пересоздать все поды по одному">🔄 Rollout restart</button>
+        <button class="danger" id="breakRelease"
+          title="Новая ревизия, поды которой никогда не станут Ready. Старые продолжат работать">💣 Выкатить сломанный релиз</button>
+        <button id="undo" title="Вернуть шаблон пода предыдущей ревизии">↩️ Rollout undo</button>
+      </div>
+      <div id="rolloutBanner" hidden></div>
+
       <div class="subhead">ReplicaSets</div>
       <div class="tablewrap"><table class="kt" id="rsTable">
-        <thead><tr><th>NAME</th><th>REVISION</th><th>DESIRED</th><th>CURRENT</th><th>READY</th><th>AGE</th></tr></thead>
+        <thead><tr><th>NAME</th><th>REVISION</th><th>RELEASE</th><th>DESIRED</th><th>CURRENT</th><th>READY</th><th>AGE</th></tr></thead>
         <tbody></tbody></table></div>
       <div class="subhead">Pods</div>
       <div class="tablewrap"><table class="kt" id="podTable">
-        <thead><tr><th>NAME</th><th>READY</th><th>STATUS</th><th>RESTARTS</th><th>AGE</th><th>NODE</th><th></th></tr></thead>
+        <thead><tr><th>NAME</th><th>READY</th><th>STATUS</th><th>RESTARTS</th><th>LAST</th><th>CPU req/lim</th>
+          <th>AGE</th><th>NODE</th><th></th></tr></thead>
         <tbody></tbody></table></div>
+      <div class="note">CPU ×2 / ÷2 — in-place resize: лимит меняется у живого пода, RESTARTS не растёт,
+        а в карточке сверху (когда ответит этот под) меняется лимит cgroup.</div>
+
+      <div class="subhead">CronJob и Jobs</div>
+      <div class="row">
+        <span class="mono muted" id="cronInfo">—</span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="backupNow" title="kubectl create job --from=cronjob/postgres-backup">💾 Бэкап сейчас</button>
+      </div>
+      <div class="tablewrap"><table class="kt" id="jobTable">
+        <thead><tr><th>NAME</th><th>STATUS</th><th>DURATION</th><th>AGE</th></tr></thead>
+        <tbody></tbody></table></div>
+
+      <div class="subhead">Events</div>
+      <div class="tablewrap"><table class="kt" id="eventTable">
+        <thead><tr><th>AGE</th><th>TYPE</th><th>REASON</th><th>OBJECT</th><th>MESSAGE</th></tr></thead>
+        <tbody></tbody></table></div>
+
       <div class="log" id="kubectlLog">Каждое действие — запрос приложения к Kubernetes API от имени его ServiceAccount.
 Здесь будет эквивалентная команда kubectl.</div>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>Ноды <span class="sub">· DaemonSet node-agent: по агенту на каждой ноде</span></h2>
+    <div class="tablewrap"><table class="kt" id="nodeTable">
+      <thead><tr><th>NODE</th><th>AGENT</th><th>KERNEL</th><th>CPU</th><th>LOAD 1/5/15</th><th>MEM free/total</th><th>UPTIME</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="note" id="nodeNote"></div>
   </section>
 
   <div class="grid2">
@@ -206,9 +249,22 @@
       <button class="danger" data-chaos="crash" title="Процесс завершится с exit 1">💥 Уронить под</button>
       <button class="danger" data-chaos="sick" title="/healthz начнёт отвечать 500">🤒 Сломать liveness</button>
       <button class="danger" data-chaos="unready" title="/readyz ответит 503 в течение 30 секунд">🙈 Not ready на 30 с</button>
+      <button class="danger" data-chaos="oom" title="Съесть память сверх limits.memory — ядро убьёт контейнер">🧨 OOM: съесть память</button>
       <button data-burn title="Нагрузить CPU пода на 2 секунды">🔥 Нагрузить CPU (2 с)</button>
     </div>
     <div class="log" id="log">Действие применяется к тому поду, который обработает запрос.</div>
+  </section>
+
+  <section class="card hints links">
+    <h2>Наблюдаемость</h2>
+    <div><a href="/metrics" target="_blank">/metrics</a> — метрики этого пода в формате Prometheus</div>
+    <div id="promLinks">Prometheus (<code>make prometheus</code>):
+      <a data-prom="sum by (pod) (rate(kube_demo_http_requests_total[1m]))" target="_blank">RPS по подам</a> ·
+      <a data-prom="histogram_quantile(0.95, sum by (le) (rate(kube_demo_http_request_duration_seconds_bucket[1m])))" target="_blank">p95 латентности</a> ·
+      <a data-prom="sum by (action) (kube_demo_actions_total)" target="_blank">действия из UI</a> ·
+      <a data-prom="up{job=&quot;kube-demo&quot;}" target="_blank">кто жив (up)</a></div>
+    <div><code>kubectl -n kube-demo logs &lt;pod&gt; -c access-log -f</code> — access-лог из sidecar-контейнера</div>
+    <div><code>kubectl -n kube-demo top pods --containers</code> — CPU/память (нужен metrics-server)</div>
   </section>
 
   <section class="card hints">
@@ -261,6 +317,8 @@ function renderInfo(d) {
   $("version").textContent = d.version;
   $("storage").textContent = `storage: ${d.storage}`;
   $("storage").className = "badge " + (d.storage === "postgres" ? "pg" : "mem");
+  $("limits").textContent = d.limits ? `CPU ${d.limits.cpu} · RAM ${d.limits.memory}` : "-";
+  $("brokenBadge").hidden = !(d.release || "").startsWith("broken");
 }
 
 function pushFeed(item) {
@@ -419,6 +477,7 @@ document.querySelectorAll("[data-chaos]").forEach((btn) => {
         crash: "упадёт через мгновение — смотрите на RESTARTS",
         sick: "провалит liveness-пробы, и kubelet перезапустит контейнер (~15 с)",
         unready: `будет NOT READY ${r.seconds} с — трафик на него не пойдёт, но и рестарта не будет`,
+        oom: `съедает память при лимите ${r.limits?.memory} — ждите OOMKilled и exit code 137 в колонке LAST`,
       }[action];
       log(`Под ${r.pod} ${what}`);
     } catch (e) {
@@ -485,33 +544,106 @@ async function loadCluster() {
   $("clusterNs").textContent = "namespace: " + st.namespace;
   $("deployName").textContent = dep.name;
   $("deployStatus").textContent =
-    `desired ${dep.desired} · current ${dep.current} · ready ${dep.ready} · up-to-date ${dep.updated}`;
+    `rev ${dep.revision} · desired ${dep.desired} · current ${dep.current} · ready ${dep.ready} · up-to-date ${dep.updated}`;
   if (!replicasDirty) $("replicas").value = dep.desired;
+
+  // Состояние rollout: застрял ли он (progressDeadlineSeconds) и не сломан ли шаблон.
+  const progressing = (dep.conditions || []).find((c) => c.type === "Progressing");
+  const banner = $("rolloutBanner");
+  if (progressing && progressing.status === "False") {
+    banner.className = "banner bad";
+    banner.textContent = `⛔ Rollout застрял: ${progressing.reason}. Новые поды не становятся Ready, ` +
+      `но старые продолжают обслуживать трафик (maxUnavailable: 0). Лечится Rollout undo.`;
+    banner.hidden = false;
+  } else if ((dep.release || "").startsWith("broken")) {
+    banner.className = "banner warn";
+    banner.textContent = "⏳ Выкатывается сломанный релиз: новые поды не проходят readiness. " +
+      "Через progressDeadlineSeconds (60 с) Deployment пометит rollout как застрявший.";
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
 
   $("rsTable").tBodies[0].replaceChildren(...st.replicaSets.map((rs) => {
     const tr = document.createElement("tr");
     if (rs.desired === 0 && rs.current === 0) tr.className = "dim";
-    tr.append(cell(rs.name), cell(rs.revision), cell(rs.desired), cell(rs.current), cell(rs.ready), cell(age(rs.createdAt)));
+    const broken = (rs.release || "").startsWith("broken");
+    tr.append(cell(rs.name), cell(rs.revision), cell(broken ? "💣 broken" : "ok", broken ? "st-bad" : ""),
+      cell(rs.desired), cell(rs.current), cell(rs.ready), cell(age(rs.createdAt)));
     return tr;
   }));
 
   $("podTable").tBodies[0].replaceChildren(...st.pods.map((p) => {
     const tr = document.createElement("tr");
     if (p.name === myPod) tr.className = "me";
-    if (p.status === "Terminating") tr.classList.add("dim");
+    if (p.status === "Terminating" || p.status === "Completed") tr.classList.add("dim");
     const name = cell(p.name);
     name.style.color = p.app === "kube-demo" ? podColor(p.name) : "";
     const act = document.createElement("td");
-    if ((p.app === "kube-demo" || p.app === "postgres") && p.status !== "Terminating") {
-      const b = document.createElement("button");
-      b.textContent = "🗑 delete";
-      b.onclick = () => deletePod(p.name);
-      act.append(b);
+    const alive = p.status !== "Terminating";
+    if ((p.app === "kube-demo" || p.app === "postgres") && alive) {
+      act.append(button("🗑 delete", () => deletePod(p.name)));
+    }
+    if (p.app === "kube-demo" && alive && p.cpu) {
+      const lim = milli(p.cpu.split("/")[1]);
+      act.append(" ", button("CPU ×2", () => resizeCPU(p.name, lim * 2)), " ",
+        button("÷2", () => resizeCPU(p.name, Math.round(lim / 2))));
     }
     tr.append(name, cell(p.ready), cell(p.status, statusClass(p.status)), cell(p.restarts),
+      cell(p.last || "", /OOM|Error/.test(p.last) ? "st-bad" : ""),
+      cell((p.cpu || "") + (p.resize ? ` (${p.resize})` : "")),
       cell(age(p.createdAt)), cell(p.node || "<none>"), act);
     return tr;
   }));
+
+  const cj = st.cronJob;
+  $("cronInfo").textContent = cj
+    ? `cronjob/${cj.name} · "${cj.schedule}" · последний успешный: ` +
+      (cj.lastSuccessfulTime ? age(cj.lastSuccessfulTime) + " назад" : "ещё не было")
+    : "CronJob postgres-backup не найден";
+  $("jobTable").tBodies[0].replaceChildren(...st.jobs.slice(0, 5).map((j) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(j.name + (j.manual ? " (вручную)" : "")),
+      cell(j.status, j.status === "Complete" ? "st-ok" : j.status === "Failed" ? "st-bad" : "st-warn"),
+      cell(j.duration || ""), cell(j.startTime ? age(j.startTime) : ""));
+    return tr;
+  }));
+
+  $("eventTable").tBodies[0].replaceChildren(...st.events.slice(0, 10).map((e) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(age(e.time)), cell(e.type, e.type === "Warning" ? "st-bad" : ""), cell(e.reason),
+      cell(e.object), cell(e.message + (e.count > 1 ? ` (×${e.count})` : ""), "msg"));
+    return tr;
+  }));
+}
+
+function button(text, onclick) {
+  const b = document.createElement("button");
+  b.textContent = text;
+  b.onclick = onclick;
+  return b;
+}
+function milli(v) {
+  if (!v || v === "-") return 500;
+  return v.endsWith("m") ? parseInt(v) : Math.round(parseFloat(v) * 1000);
+}
+
+async function loadNodes() {
+  if (document.hidden) return;
+  try {
+    const d = await api("/api/nodes");
+    $("nodeTable").tBodies[0].replaceChildren(...d.nodes.map((n) => {
+      const tr = document.createElement("tr");
+      const up = n.uptimeSeconds > 86400 ? Math.floor(n.uptimeSeconds / 86400) + "d" : Math.floor(n.uptimeSeconds / 3600) + "h";
+      tr.append(cell(n.node), cell(n.agent), cell(n.kernel), cell(n.cpus),
+        cell(n.load.map((x) => x.toFixed(2)).join(" / ")), cell(`${n.memAvailableMi} / ${n.memTotalMi} Mi`), cell(up));
+      return tr;
+    }));
+    $("nodeNote").textContent = `Агентов: ${d.nodes.length}. Адреса — из DNS headless-сервиса node-agent, ` +
+      `опросил под ${d.servedBy}.` + (d.error ? " Ошибки: " + d.error : "");
+  } catch (e) {
+    $("nodeNote").textContent = e.message;
+  }
 }
 
 async function kubeAction(fn) {
@@ -525,8 +657,14 @@ async function kubeAction(fn) {
     throw e;
   }
 }
+const post = (path) => api(path, { method: "POST" });
 const deletePod = (name) => kubeAction(() => api(`/api/k8s/pods/${encodeURIComponent(name)}`, { method: "DELETE" }));
-const rolloutRestart = () => kubeAction(() => api("/api/k8s/restart", { method: "POST" }));
+const rolloutRestart = () => kubeAction(() => post("/api/k8s/restart"));
+const resizeCPU = (name, limitMilli) => kubeAction(() => api(`/api/k8s/pods/${encodeURIComponent(name)}/cpu`, {
+  method: "PUT",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ limitMilli: Math.min(2000, Math.max(100, limitMilli)) }),
+})).catch(() => {});
 
 $("replicas").oninput = () => { replicasDirty = true; };
 $("scaleDown").onclick = () => { $("replicas").value = Math.max(1, +$("replicas").value - 1); replicasDirty = true; };
@@ -540,6 +678,14 @@ $("scaleApply").onclick = async () => {
   replicasDirty = false;
 };
 $("restart").onclick = () => rolloutRestart().catch(() => {});
+$("breakRelease").onclick = () => kubeAction(() => post("/api/k8s/break")).catch(() => {});
+$("undo").onclick = () => kubeAction(() => post("/api/k8s/undo")).catch(() => {});
+$("backupNow").onclick = () => kubeAction(() => post("/api/k8s/backup")).catch(() => {});
+
+// Ссылки на Prometheus: тот же хост, NodePort 30090.
+document.querySelectorAll("[data-prom]").forEach((a) => {
+  a.href = `${location.protocol}//${location.hostname}:30090/query?g0.expr=${encodeURIComponent(a.dataset.prom)}&g0.tab=graph&g0.range_input=15m`;
+});
 
 // ---------- проверка сохранности данных ----------
 
@@ -623,6 +769,8 @@ async function checkSnapshot() {
 renderSnapshot();
 setInterval(loadCluster, 2000);
 setInterval(checkSnapshot, 2000);
+setInterval(loadNodes, 5000);
+loadNodes();
 
 hello();
 loadStats();

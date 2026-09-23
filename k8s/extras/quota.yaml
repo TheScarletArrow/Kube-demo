@@ -1,0 +1,38 @@
+# ResourceQuota — «бюджет» namespace'а, LimitRange — правила для каждого контейнера.
+#   kubectl apply -f k8s/extras/quota.yaml
+#   kubectl -n kube-demo describe quota,limitrange
+#
+# Демо: Scale 10 в UI -> часть подов не создастся, в событиях ReplicaSet'а
+# будет FailedCreate ... exceeded quota. Сколько уже занято — в `describe quota`.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: kube-demo
+  namespace: kube-demo
+spec:
+  hard:
+    pods: "10"               # все поды namespace'а: приложение, база, агенты DaemonSet'а...
+    requests.cpu: "2"
+    requests.memory: 1Gi
+    limits.memory: 2Gi
+    persistentvolumeclaims: "4"
+---
+# LimitRange: контейнер без resources получит значения по умолчанию,
+# а контейнер «жирнее» max будет отклонён ещё при создании пода.
+#   kubectl -n kube-demo run no-limits --image=busybox:1.37 -- sleep 3600
+#   kubectl -n kube-demo get pod no-limits -o jsonpath='{.spec.containers[0].resources}'
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: kube-demo
+  namespace: kube-demo
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 20m
+        memory: 16Mi
+      default:
+        memory: 64Mi
+      max:
+        memory: 512Mi

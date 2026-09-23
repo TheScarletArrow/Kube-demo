@@ -51,8 +51,12 @@ jobs:
       - name: kubeconform
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
-          kubectl kustomize k8s/ | ./kubeconform -strict -summary -
-          ./kubeconform -strict -summary k8s/extras/
+          kubectl kustomize k8s/ | ./kubeconform -strict -summary -kubernetes-version 1.33.0 -
+          # extras: HTTPRoute проверяем по схемам CRD из каталога, values для helm — не манифест
+          ./kubeconform -strict -summary -kubernetes-version 1.33.0 -ignore-filename-pattern 'values' \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            k8s/extras/
 
   e2e:
     name: E2E in kind
@@ -74,10 +78,30 @@ jobs:
         run: make zero-downtime
       - name: Cluster control via app + data persistence
         run: make persistence
+      - name: NetworkPolicy
+        run: make features F=network-policy
+      - name: Native sidecar
+        run: make features F=sidecar
+      - name: DaemonSet
+        run: make features F=nodes
+      - name: CronJob / Job
+        run: make features F=backup
+      - name: In-place resize
+        run: make features F=resize
+      - name: OOMKilled
+        run: make features F=oom
+      - name: Broken release + rollout undo
+        run: make features F=broken-release
+      - name: ResourceQuota
+        run: make features F=quota
+      - name: Metrics + Prometheus
+        run: make features F=observability
+      - name: Gateway API + canary
+        run: make features F=gateway
       - name: Debug info
         if: failure()
         run: |
-          kubectl -n kube-demo get all,endpointslices,pvc -o wide
+          kubectl -n kube-demo get all,endpointslices,pvc,networkpolicy,quota -o wide
           kubectl -n kube-demo get events --sort-by=.lastTimestamp | tail -50
           kubectl -n kube-demo logs -l app=kube-demo --all-containers --prefix --tail=100
 

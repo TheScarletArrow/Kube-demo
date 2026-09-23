@@ -1,0 +1,90 @@
+# Бэкап базы по расписанию: CronJob раз в 10 минут создаёт Job, Job — под,
+# под делает pg_dump в отдельный том и завершается. Хранятся 5 последних дампов.
+#   kubectl -n kube-demo get cronjob,jobs,pods -l app=postgres-backup
+#   kubectl -n kube-demo create job backup-now --from=cronjob/postgres-backup   # запустить сейчас
+#   kubectl -n kube-demo logs job/backup-now
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+  labels:
+    app: postgres-backup
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  labels:
+    app: postgres-backup
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid        # новый запуск не стартует, пока идёт предыдущий
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+    spec:
+      backoffLimit: 2              # до 2 повторов при ошибке
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            postgres-access: "true" # иначе NetworkPolicy не пустит к базе
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70          # пользователь postgres в alpine-образе
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              envFrom:
+                - secretRef:
+                    name: postgres
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres
+                      key: POSTGRES_PASSWORD
+              command:
+                - sh
+                - -c
+                - |
+                  set -euo pipefail
+                  f="/backups/demo-$(date +%Y%m%d-%H%M%S).sql.gz"
+                  pg_dump -h postgres -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > "$f"
+                  ls -1t /backups/*.sql.gz | tail -n +6 | xargs -r rm --
+                  echo "backup ok: $f ($(du -h "$f" | cut -f1))"
+                  ls -lh /backups
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: postgres-backups

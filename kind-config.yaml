@@ -10,5 +10,11 @@ nodes:
       # NodePort-сервис приложения -> http://localhost:30080
       - containerPort: 30080
         hostPort: 30080
+      # Gateway API (Traefik, k8s/extras/gateway) -> http://localhost:30081
+      - containerPort: 30081
+        hostPort: 30081
+      # Prometheus (k8s/extras/observability) -> http://localhost:30090
+      - containerPort: 30090
+        hostPort: 30090
   - role: worker
   - role: worker

@@ -1,0 +1,30 @@
+# Gateway API: HTTPRoute — «куда слать запросы, пришедшие на Gateway».
+# Главная фишка по сравнению с Ingress — веса из коробки: 80% на основную
+# версию, 20% на canary. Поменяли веса, применили — трафик перераспределился.
+#   http://localhost:30081   (UI: оранжевые квадратики — ответы canary)
+#   curl -H 'X-Canary: always' localhost:30081   # только canary
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kube-demo
+  namespace: kube-demo
+spec:
+  parentRefs:
+    - name: traefik-gateway # Gateway создаёт helm-чарт Traefik
+      namespace: traefik
+  rules:
+    # Заголовок X-Canary: always — всегда на canary (удобно для тестировщиков).
+    - matches:
+        - headers:
+            - name: X-Canary
+              value: always
+      backendRefs:
+        - name: kube-demo-canary
+          port: 80
+    - backendRefs:
+        - name: kube-demo
+          port: 80
+          weight: 80
+        - name: kube-demo-canary
+          port: 80
+          weight: 20
