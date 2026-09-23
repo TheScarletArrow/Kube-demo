@@ -101,9 +101,9 @@ jobs:
       - name: Debug info
         if: failure()
         run: |
-          kubectl -n kube-demo get all,endpointslices,pvc,networkpolicy,quota -o wide
-          kubectl -n kube-demo get events --sort-by=.lastTimestamp | tail -50
-          kubectl -n kube-demo logs -l app=kube-demo --all-containers --prefix --tail=100
+          kubectl -n kube-demo get all,endpointslices,pvc,networkpolicy,quota -o wide || true
+          kubectl -n kube-demo get events --sort-by=.lastTimestamp | tail -50 || true
+          kubectl -n kube-demo logs -l app=kube-demo --all-containers --prefix --tail=100 || true
 
   publish:
     name: Publish image to GHCR

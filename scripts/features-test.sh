@@ -147,18 +147,32 @@ gateway() {
   kubectl -n traefik wait --for=condition=Programmed gateway/traefik-gateway --timeout=120s || { gateway_debug; fail "Gateway не Programmed"; }
   kubectl apply -f k8s/extras/gateway/canary.yaml -f k8s/extras/gateway/httproute.yaml
   k rollout status deployment/kube-demo-canary --timeout=180s
-  for _ in $(seq 1 60); do curl -sf http://localhost:30081/api/hello >/dev/null && break; sleep 1; done
-  curl -sf http://localhost:30081/api/hello >/dev/null || { gateway_debug; fail "через Gateway не отвечает"; }
-  canary=0; main=0
+  # Traefik подхватывает HTTPRoute асинхронно: ждём 10 успешных ответов подряд.
+  streak=0
+  for _ in $(seq 1 240); do
+    if curl -sf -o /dev/null http://localhost:30081/api/hello; then
+      streak=$((streak+1)); [ "$streak" -ge 10 ] && break
+    else
+      streak=0
+    fi
+    sleep 0.5
+  done
+  [ "$streak" -ge 10 ] || { gateway_debug; fail "через Gateway нет стабильных ответов"; }
+
+  canary=0; main=0; errors=""
   for _ in $(seq 1 60); do
-    pod=$(curl -sf http://localhost:30081/api/hello | json pod)
+    body=$(curl -s -w '\n%{http_code}' http://localhost:30081/api/hello || true)
+    code=${body##*$'\n'}
+    if [ "$code" != 200 ]; then errors+=" $code"; continue; fi
+    pod=$(json pod <<<"$body")
     case "$pod" in kube-demo-canary-*) canary=$((canary+1)) ;; kube-demo-*) main=$((main+1)) ;; esac
   done
-  echo "   из 60 запросов: основная версия $main, canary $canary"
+  echo "   из 60 запросов: основная версия $main, canary $canary, ошибки:${errors:- нет}"
+  [ -z "$errors" ] || { gateway_debug; fail "ошибки при запросах через Gateway:$errors"; }
   [ "$canary" -ge 2 ] && [ "$main" -ge 30 ] || fail "веса 80/20 не соблюдаются"
   for _ in $(seq 1 10); do
-    pod=$(curl -sf -H 'X-Canary: always' http://localhost:30081/api/hello | json pod)
-    [[ "$pod" == kube-demo-canary-* ]] || fail "X-Canary: always привёл на $pod, а не на canary"
+    pod=$(curl -s -H 'X-Canary: always' http://localhost:30081/api/hello | json pod)
+    [[ "$pod" == kube-demo-canary-* ]] || fail "X-Canary: always привёл на '$pod', а не на canary"
   done
   ok "Gateway делит трафик ~80/20, заголовок X-Canary: always ведёт на canary"
 }
