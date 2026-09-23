@@ -32,12 +32,15 @@ id=$(json id <<<"$snap"); writer=$(json pod <<<"$snap"); count=$(json messages <
 echo "   снимок #$id: $count сообщений, автор $writer"
 
 echo "→ убиваем автора снимка (через API приложения), базу и все остальные поды"
+old_pods=$(kubectl -n "$NS" get pods -l app=kube-demo -o name)
 curl -sf -X DELETE "$URL/api/k8s/pods/$writer" | json command
 kubectl -n "$NS" delete pod postgres-0 --wait=false
 curl -sf -X POST "$URL/api/k8s/restart" | json command
 sleep 2
 kubectl -n "$NS" rollout status statefulset/postgres --timeout=180s
 kubectl -n "$NS" rollout status deployment/kube-demo --timeout=180s
+# ждём, пока старые поды не исчезнут совсем (а не просто Terminating)
+kubectl -n "$NS" wait --for=delete $old_pods --timeout=120s
 kubectl -n "$NS" get pods -o wide
 
 echo "→ проверяем снимок новым подом"
@@ -49,6 +52,8 @@ for i in $(seq 1 60); do
 done
 echo "   $check"
 [[ "$check" == *'"writerAlive":false'* ]] || fail "автор снимка должен быть удалён"
-[[ "$check" != *"\"checkedBy\":\"$writer\""* ]] || fail "проверять должен другой под"
+checked_by=$(json checkedBy <<<"$check")
+grep -qx "pod/$checked_by" <<<"$old_pods" && fail "проверил старый под $checked_by, а должен новый"
+echo "   проверил новый под $checked_by; старых подов в кластере не осталось"
 
 echo "✅ поды пересозданы (включая базу), данные на месте"
