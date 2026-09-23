@@ -13,6 +13,9 @@ import (
 type Config struct {
 	Port string
 
+	// Deployment, которым управляем через Kubernetes API (scale, rollout restart).
+	Deployment string
+
 	PodName      string
 	PodNamespace string
 	PodIP        string
@@ -55,7 +58,8 @@ func loadConfig() Config {
 	hostname, _ := os.Hostname()
 
 	cfg := Config{
-		Port: env("PORT", "8080"),
+		Port:       env("PORT", "8080"),
+		Deployment: env("DEPLOYMENT_NAME", "kube-demo"),
 
 		PodName:      env("POD_NAME", hostname),
 		PodNamespace: env("POD_NAMESPACE", "-"),

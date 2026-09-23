@@ -1,0 +1,47 @@
+# Права приложения на Kubernetes API — ровно то, что нужно кнопкам в UI,
+# и только внутри namespace kube-demo:
+#   kubectl get pods / get rs / get deploy   -> get, list
+#   kubectl delete pod <name>                -> pods: delete
+#   kubectl scale deployment/kube-demo       -> deployments/scale: patch
+#   kubectl rollout restart deployment/...   -> deployments: patch
+# Проверить: kubectl auth can-i --list -n kube-demo --as=system:serviceaccount:kube-demo:kube-demo
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-demo
+  labels:
+    app: kube-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kube-demo
+  labels:
+    app: kube-demo
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list"]
+  # resourceNames: управлять можно только своим Deployment'ом, а не любым в namespace.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    resourceNames: ["kube-demo"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kube-demo
+  labels:
+    app: kube-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kube-demo
+subjects:
+  - kind: ServiceAccount
+    name: kube-demo
+    namespace: kube-demo

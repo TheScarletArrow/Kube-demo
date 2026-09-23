@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,6 +23,14 @@ CREATE TABLE IF NOT EXISTS messages (
     author     TEXT        NOT NULL,
     text       TEXT        NOT NULL,
     pod        TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS snapshots (
+    id         BIGSERIAL   PRIMARY KEY,
+    pod        TEXT        NOT NULL,
+    messages   BIGINT      NOT NULL,
+    max_id     BIGINT      NOT NULL,
+    digest     TEXT        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );`
 
@@ -144,6 +155,44 @@ func (s *postgresStore) Messages(ctx context.Context, limit int) ([]Message, err
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func (s *postgresStore) MessagesUpTo(ctx context.Context, maxID int64) ([]Message, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, author, text, pod, created_at FROM messages WHERE id <= $1 ORDER BY id`, maxID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Message, error) {
+		var m Message
+		err := row.Scan(&m.ID, &m.Author, &m.Text, &m.Pod, &m.CreatedAt)
+		return m, err
+	})
+}
+
+func (s *postgresStore) CreateSnapshot(ctx context.Context, pod string) (Snapshot, error) {
+	msgs, err := s.MessagesUpTo(ctx, math.MaxInt64)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snap := Snapshot{Pod: pod}
+	snap.Messages, snap.MaxID, snap.Digest = digestMessages(msgs)
+	err = s.pool.QueryRow(ctx,
+		`INSERT INTO snapshots (pod, messages, max_id, digest) VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		snap.Pod, snap.Messages, snap.MaxID, snap.Digest,
+	).Scan(&snap.ID, &snap.CreatedAt)
+	return snap, err
+}
+
+func (s *postgresStore) GetSnapshot(ctx context.Context, id int64) (Snapshot, error) {
+	var snap Snapshot
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, pod, messages, max_id, digest, created_at FROM snapshots WHERE id = $1`, id,
+	).Scan(&snap.ID, &snap.Pod, &snap.Messages, &snap.MaxID, &snap.Digest, &snap.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Snapshot{}, ErrSnapshotNotFound
+	}
+	return snap, err
 }
 
 func (s *postgresStore) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }

@@ -34,6 +34,19 @@ func run() error {
 	defer store.Close()
 
 	srv := newServer(cfg, store, os.Exit)
+
+	// Клиент Kubernetes API: работает через токен ServiceAccount пода.
+	kube, err := newInClusterClient(cfg.PodNamespace, cfg.Deployment)
+	switch {
+	case errors.Is(err, errNotInCluster):
+		slog.Info("kubernetes API is not available: not running in a cluster")
+	case err != nil:
+		slog.Warn("kubernetes API is not available", "err", err)
+	default:
+		srv.kube = kube
+		slog.Info("kubernetes API enabled", "namespace", kube.namespace, "deployment", kube.deployment)
+	}
+
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.routes(),

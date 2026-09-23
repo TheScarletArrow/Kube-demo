@@ -17,6 +17,7 @@ resources:
   - postgres/secret.yaml
   - postgres/service.yaml
   - postgres/statefulset.yaml
+  - app/rbac.yaml
   - app/configmap.yaml
   - app/deployment.yaml
   - app/service.yaml

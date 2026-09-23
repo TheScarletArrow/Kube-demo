@@ -88,4 +88,20 @@ func TestPostgresStore(t *testing.T) {
 	if err != nil || len(msgs) != 1 || msgs[0].ID != m.ID {
 		t.Fatalf("messages: %+v, %v", msgs, err)
 	}
+
+	snap, err := s.CreateSnapshot(ctx, "pod-a")
+	if err != nil || snap.ID == 0 || snap.Messages == 0 || snap.MaxID < m.ID {
+		t.Fatalf("create snapshot: %+v, %v", snap, err)
+	}
+	got, err := s.GetSnapshot(ctx, snap.ID)
+	if err != nil || got.Digest != snap.Digest || got.Messages != snap.Messages {
+		t.Fatalf("get snapshot: %+v, %v", got, err)
+	}
+	upTo, err := s.MessagesUpTo(ctx, snap.MaxID)
+	if count, _, digest := digestMessages(upTo); err != nil || count != snap.Messages || digest != snap.Digest {
+		t.Fatalf("digest mismatch: %d %s vs %+v (%v)", count, digest, snap, err)
+	}
+	if _, err := s.GetSnapshot(ctx, -1); err != ErrSnapshotNotFound {
+		t.Fatalf("want ErrSnapshotNotFound, got %v", err)
+	}
 }

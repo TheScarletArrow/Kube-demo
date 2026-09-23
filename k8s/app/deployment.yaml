@@ -20,6 +20,9 @@ spec:
       labels:
         app: kube-demo
     spec:
+      # ServiceAccount с правами из rbac.yaml: приложение само умеет
+      # scale / delete pod / rollout restart (кнопки в UI).
+      serviceAccountName: kube-demo
       terminationGracePeriodSeconds: 30
       # Стараемся раскидать реплики по разным нодам.
       topologySpreadConstraints:

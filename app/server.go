@@ -28,6 +28,7 @@ const (
 type server struct {
 	cfg     Config
 	store   Store
+	kube    *kubeClient // nil, если приложение запущено не в Kubernetes
 	started time.Time
 	exit    func(code int) // os.Exit, подменяется в тестах
 
@@ -55,6 +56,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/chaos/crash", s.handleCrash)
 	mux.HandleFunc("POST /api/chaos/sick", s.handleSick)
 	mux.HandleFunc("POST /api/chaos/unready", s.handleUnready)
+
+	s.kubeRoutes(mux)
 
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -114,6 +117,7 @@ type podInfo struct {
 	Color     string    `json:"color"`
 	Greeting  string    `json:"greeting"`
 	Storage   string    `json:"storage"`
+	KubeAPI   bool      `json:"kubeApi"`
 	StartedAt time.Time `json:"startedAt"`
 	Uptime    string    `json:"uptime"`
 	Served    int64     `json:"served"`
@@ -129,6 +133,7 @@ func (s *server) info() podInfo {
 		Color:     s.cfg.Color,
 		Greeting:  s.cfg.Greeting,
 		Storage:   s.store.Kind(),
+		KubeAPI:   s.kube != nil,
 		StartedAt: s.started,
 		Uptime:    time.Since(s.started).Round(time.Second).String(),
 		Served:    s.served.Load(),

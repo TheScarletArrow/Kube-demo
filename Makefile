@@ -6,7 +6,7 @@ URL     ?= http://localhost:30080
 
 .DEFAULT_GOAL := help
 .PHONY: help up down test run build kind-up kind-down load deploy undeploy status logs watch \
-        smoke zero-downtime v2 metrics-server hpa-on hpa-off
+        smoke zero-downtime persistence v2 metrics-server hpa-on hpa-off
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -64,6 +64,9 @@ smoke: ## Smoke-тест: отвечает, балансирует, пишет �
 
 zero-downtime: ## Rolling update под нагрузкой — ошибок быть не должно
 	./scripts/zero-downtime-test.sh $(URL)
+
+persistence: ## Scale через приложение + убить поды и базу — данные должны остаться
+	./scripts/persistence-test.sh $(URL)
 
 v2: ## Собрать образ 2.0.0 и выкатить его rolling update'ом
 	$(MAKE) build load VERSION=2.0.0

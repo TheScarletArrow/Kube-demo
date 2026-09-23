@@ -72,6 +72,8 @@ jobs:
         run: make smoke
       - name: Zero-downtime rolling update
         run: make zero-downtime
+      - name: Cluster control via app + data persistence
+        run: make persistence
       - name: Debug info
         if: failure()
         run: |

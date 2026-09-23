@@ -17,6 +17,7 @@
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  main > *, .grid2 > * { min-width: 0; } /* иначе широкие таблицы распирают колонку */
   header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   header h1 { font-size: 20px; margin: 0 auto 0 0; }
   .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
@@ -77,6 +78,27 @@
          margin-top: 12px; min-height: 40px; max-height: 140px; overflow: auto; white-space: pre-wrap; }
   code { font-family: var(--mono); font-size: 12.5px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
   .hints { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+
+  .sub { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .subhead { font-size: 12px; color: var(--muted); margin: 14px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  .mono { font-family: var(--mono); font-size: 13px; }
+  .muted { color: var(--muted); }
+  .num { width: 56px; text-align: center; }
+  .tablewrap { overflow-x: auto; }
+  table.kt { border-collapse: collapse; width: 100%; font: 12.5px/1.5 var(--mono); white-space: nowrap; }
+  .kt th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 12px 3px 0; border-bottom: 1px solid var(--border); }
+  .kt td { padding: 3px 12px 3px 0; border-bottom: 1px dashed var(--border); }
+  .kt tr.me td:first-child::after { content: " ← вы здесь"; color: var(--muted); }
+  .kt tr.dim td { color: var(--muted); }
+  .kt button { font-size: 12px; padding: 1px 8px; }
+  .st-ok { color: var(--ok); } .st-warn { color: #d97706; } .st-bad { color: var(--danger); }
+  .steps { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 13px; }
+  .snap { font: 12.5px/1.6 var(--mono); margin-top: 12px; }
+  .verdict { margin-top: 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); display: none; }
+  .verdict.ok { display: block; border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .verdict.bad { display: block; border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .verdict.wait { display: block; border-color: #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -114,6 +136,34 @@
       (видно во время rolling update). Красный — ошибка: во время обновления их быть не должно.</div>
   </section>
 
+  <section class="card">
+    <h2>Кластер <span class="sub">· kubectl в браузере</span><span class="spacer"></span>
+      <span class="sub mono" id="clusterNs"></span></h2>
+    <div class="note" id="clusterOff" hidden>Приложение запущено не в Kubernetes: управление кластером недоступно.</div>
+    <div id="clusterOn">
+      <div class="row">
+        <span class="mono">deployment/<b id="deployName">kube-demo</b></span>
+        <span class="mono muted" id="deployStatus"></span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="scaleDown" title="Меньше реплик">−</button>
+        <input id="replicas" class="num" type="number" min="1" max="10" value="3" aria-label="Число реплик">
+        <button id="scaleUp" title="Больше реплик">+</button>
+        <button class="primary" id="scaleApply">Scale</button>
+        <button id="restart" title="Пересоздать все поды по одному">🔄 Rollout restart</button>
+      </div>
+      <div class="subhead">ReplicaSets</div>
+      <div class="tablewrap"><table class="kt" id="rsTable">
+        <thead><tr><th>NAME</th><th>REVISION</th><th>DESIRED</th><th>CURRENT</th><th>READY</th><th>AGE</th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="subhead">Pods</div>
+      <div class="tablewrap"><table class="kt" id="podTable">
+        <thead><tr><th>NAME</th><th>READY</th><th>STATUS</th><th>RESTARTS</th><th>AGE</th><th>NODE</th><th></th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="log" id="kubectlLog">Каждое действие — запрос приложения к Kubernetes API от имени его ServiceAccount.
+Здесь будет эквивалентная команда kubectl.</div>
+    </div>
+  </section>
+
   <div class="grid2">
     <section class="card">
       <h2>Визиты по подам <span class="spacer"></span><button id="reset">Сбросить</button></h2>
@@ -131,6 +181,24 @@
       <ul class="msgs" id="msgs"></ul>
     </section>
   </div>
+
+  <section class="card">
+    <h2>Проверка сохранности данных</h2>
+    <ol class="steps">
+      <li>Напишите пару сообщений в гостевую книгу и сделайте снимок: запомним число сообщений и их SHA-256.</li>
+      <li>Убейте поды: автора снимка, базу <code>postgres-0</code> или всё сразу.</li>
+      <li>Проверка идёт сама каждые 2 секунды, и выполняет её уже другой под.</li>
+    </ol>
+    <div class="row">
+      <button class="primary" id="snapBtn">📸 Сделать снимок</button>
+      <button data-kill="writer" disabled>🗑 Удалить под-автора</button>
+      <button data-kill="db" disabled>🗑 Удалить postgres-0</button>
+      <button data-kill="all" disabled>💣 Пересоздать всё</button>
+    </div>
+    <div class="snap" id="snapInfo"></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="snapLog">Снимка пока нет.</div>
+  </section>
 
   <section class="card">
     <h2>Хаос-инжиниринг</h2>
@@ -180,6 +248,7 @@ async function api(path, opts = {}) {
 }
 
 function renderInfo(d) {
+  myPod = d.pod;
   document.documentElement.style.setProperty("--accent", d.color);
   $("greeting").textContent = `${d.greeting}! Этот ответ отдал под`;
   $("pod").textContent = d.pod;
@@ -367,9 +436,199 @@ document.querySelector("[data-burn]").onclick = async () => {
   }
 };
 
+// ---------- кластер: kubectl в браузере ----------
+
+let kubeOn = true;
+let myPod = "";
+let replicasDirty = false;
+
+function age(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+  if (s < 120) return s + "s";
+  if (s < 7200) return Math.floor(s / 60) + "m";
+  if (s < 172800) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+function statusClass(st) {
+  if (st === "Running" || st === "Completed") return "st-ok";
+  if (/Err|BackOff|Fail|OOM|Unknown/.test(st)) return "st-bad";
+  return "st-warn";
+}
+function cell(text, cls) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (cls) td.className = cls;
+  return td;
+}
+function kubectlLog(line) {
+  const el = $("kubectlLog");
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
+}
+
+async function loadCluster() {
+  if (!kubeOn || document.hidden) return;
+  let d;
+  try {
+    d = await api("/api/k8s/state");
+  } catch (e) {
+    if (/только внутри Kubernetes/.test(e.message)) {
+      kubeOn = false;
+      $("clusterOn").hidden = true;
+      $("clusterOff").hidden = false;
+      document.querySelectorAll("[data-kill]").forEach((b) => (b.title = "Доступно только в Kubernetes"));
+      return;
+    }
+    $("deployStatus").textContent = "ошибка: " + e.message;
+    return;
+  }
+  const st = d.state, dep = st.deployment;
+  $("clusterNs").textContent = "namespace: " + st.namespace;
+  $("deployName").textContent = dep.name;
+  $("deployStatus").textContent =
+    `desired ${dep.desired} · current ${dep.current} · ready ${dep.ready} · up-to-date ${dep.updated}`;
+  if (!replicasDirty) $("replicas").value = dep.desired;
+
+  $("rsTable").tBodies[0].replaceChildren(...st.replicaSets.map((rs) => {
+    const tr = document.createElement("tr");
+    if (rs.desired === 0 && rs.current === 0) tr.className = "dim";
+    tr.append(cell(rs.name), cell(rs.revision), cell(rs.desired), cell(rs.current), cell(rs.ready), cell(age(rs.createdAt)));
+    return tr;
+  }));
+
+  $("podTable").tBodies[0].replaceChildren(...st.pods.map((p) => {
+    const tr = document.createElement("tr");
+    if (p.name === myPod) tr.className = "me";
+    if (p.status === "Terminating") tr.classList.add("dim");
+    const name = cell(p.name);
+    name.style.color = p.app === "kube-demo" ? podColor(p.name) : "";
+    const act = document.createElement("td");
+    if ((p.app === "kube-demo" || p.app === "postgres") && p.status !== "Terminating") {
+      const b = document.createElement("button");
+      b.textContent = "🗑 delete";
+      b.onclick = () => deletePod(p.name);
+      act.append(b);
+    }
+    tr.append(name, cell(p.ready), cell(p.status, statusClass(p.status)), cell(p.restarts),
+      cell(age(p.createdAt)), cell(p.node || "<none>"), act);
+    return tr;
+  }));
+}
+
+async function kubeAction(fn) {
+  try {
+    const r = await fn();
+    kubectlLog(`$ ${r.command}    (выполнил под ${r.servedBy})`);
+    setTimeout(loadCluster, 300);
+    return r;
+  } catch (e) {
+    kubectlLog("Ошибка: " + e.message);
+    throw e;
+  }
+}
+const deletePod = (name) => kubeAction(() => api(`/api/k8s/pods/${encodeURIComponent(name)}`, { method: "DELETE" }));
+const rolloutRestart = () => kubeAction(() => api("/api/k8s/restart", { method: "POST" }));
+
+$("replicas").oninput = () => { replicasDirty = true; };
+$("scaleDown").onclick = () => { $("replicas").value = Math.max(1, +$("replicas").value - 1); replicasDirty = true; };
+$("scaleUp").onclick = () => { $("replicas").value = Math.min(10, +$("replicas").value + 1); replicasDirty = true; };
+$("scaleApply").onclick = async () => {
+  await kubeAction(() => api("/api/k8s/replicas", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ replicas: +$("replicas").value }),
+  })).catch(() => {});
+  replicasDirty = false;
+};
+$("restart").onclick = () => rolloutRestart().catch(() => {});
+
+// ---------- проверка сохранности данных ----------
+
+let snapshot = null;
+let lastVerdict = "";
+try { snapshot = JSON.parse(localStorage.getItem("kube-demo-snapshot") || "null"); } catch {}
+
+function snapLog(line) {
+  const el = $("snapLog");
+  if (el.textContent === "Снимка пока нет.") el.textContent = "";
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
+}
+function setVerdict(cls, text) {
+  $("verdict").className = "verdict " + cls;
+  $("verdict").textContent = text;
+  if (text !== lastVerdict) snapLog(text);
+  lastVerdict = text;
+}
+function renderSnapshot() {
+  const has = !!snapshot;
+  document.querySelectorAll("[data-kill]").forEach((b) => (b.disabled = !has || !kubeOn));
+  $("snapInfo").textContent = has
+    ? `Снимок #${snapshot.id}: ${snapshot.messages} сообщ. (id ≤ ${snapshot.maxId}), ` +
+      `sha256 ${snapshot.digest.slice(0, 16)}…, сделал под ${snapshot.pod}`
+    : "";
+}
+
+$("snapBtn").onclick = async () => {
+  try {
+    snapshot = await api("/api/snapshots", { method: "POST" });
+    try { localStorage.setItem("kube-demo-snapshot", JSON.stringify(snapshot)); } catch {}
+    lastVerdict = "";
+    renderSnapshot();
+    snapLog(`📸 Снимок #${snapshot.id} сделал под ${snapshot.pod}: ${snapshot.messages} сообщ.` +
+      (snapshot.messages ? "" : " (гостевая книга пуста — напишите что-нибудь для наглядности)"));
+    checkSnapshot();
+  } catch (e) {
+    snapLog("Не удалось сделать снимок: " + e.message);
+  }
+};
+
+document.querySelectorAll("[data-kill]").forEach((btn) => {
+  btn.onclick = async () => {
+    const what = btn.dataset.kill;
+    try {
+      if (what === "writer") await deletePod(snapshot.pod);
+      if (what === "db") await deletePod("postgres-0");
+      if (what === "all") { await rolloutRestart(); await deletePod("postgres-0"); }
+      snapLog({ writer: `🗑 Удаляем под ${snapshot.pod}, сделавший снимок`,
+                db: "🗑 Удаляем postgres-0 — под с базой",
+                all: "💣 Пересоздаём все поды приложения и базу" }[what]);
+    } catch (e) {
+      snapLog("Не получилось: " + e.message);
+    }
+  };
+});
+
+async function checkSnapshot() {
+  if (!snapshot || document.hidden) return;
+  const res = await fetch(`/api/snapshots/${snapshot.id}`, { cache: "no-store" }).catch((e) => ({ error: e }));
+  if (res.error) return setVerdict("wait", "⏳ Сервис не отвечает — поды пересоздаются, ждём…");
+  const d = await res.json().catch(() => ({}));
+
+  if (res.status === 404) {
+    return setVerdict("bad", `❌ ${d.error}. Проверил под ${d.checkedBy}.`);
+  }
+  if (!res.ok) {
+    return setVerdict("wait", `⏳ Хранилище недоступно (под ${res.headers.get("X-Pod-Name") || "?"}): ждём, пока база поднимется…`);
+  }
+  if (!d.ok) {
+    return setVerdict("bad", `❌ Данные изменились: было ${d.snapshot.messages} сообщ., сейчас ${d.currentMessages}; ` +
+      `контрольная сумма ${d.currentDigest === d.snapshot.digest ? "совпадает" : "НЕ совпадает"}.`);
+  }
+  const writer = d.writerAlive === false
+    ? `его уже нет в кластере`
+    : d.writerAlive === true ? (d.snapshot.pod === d.checkedBy ? "это тот же под" : "он ещё жив") : "";
+  setVerdict("ok", `✅ Данные на месте: ${d.currentMessages} из ${d.snapshot.messages} сообщ., SHA-256 совпадает. ` +
+    `Снимок сделал ${d.snapshot.pod}${writer ? " — " + writer : ""}; проверил ${d.checkedBy}.`);
+}
+
+renderSnapshot();
+setInterval(loadCluster, 2000);
+setInterval(checkSnapshot, 2000);
+
 hello();
 loadStats();
 loadMessages();
+loadCluster().then(renderSnapshot);
+checkSnapshot();
 </script>
 </body>
 </html>

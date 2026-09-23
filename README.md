@@ -6,6 +6,10 @@
 
 - **счётчик визитов по подам**: видно, как Service раскидывает запросы;
 - **гостевая книга** в Postgres (StatefulSet + PVC): данные общие для всех реплик и переживают рестарты;
+- **kubectl в браузере**: `get pods/rs/deploy`, `scale`, `delete pod`, `rollout restart` прямо из UI:
+  приложение само ходит в Kubernetes API от имени своего ServiceAccount (права — RBAC);
+- **проверка сохранности данных**: снимок гостевой книги (число сообщений + SHA-256), потом убиваем
+  поды и даже базу, и уже другой под доказывает, что ничего не потерялось;
 - **хаос-кнопки**: уронить под, сломать liveness, вывести из балансировки, нагрузить CPU;
 - **graceful shutdown**: rolling update проходит без единой ошибки у клиентов;
 - `curl` получает одну строку текста, браузер получает UI.
@@ -41,16 +45,17 @@ flowchart LR
 ├── app/                     # Go-приложение
 │   ├── main.go              # запуск, graceful shutdown
 │   ├── server.go            # HTTP API, пробы, хаос
-│   ├── store*.go            # хранилище: memory | postgres
+│   ├── store*.go            # хранилище: memory | postgres, снимки данных
+│   ├── k8s*.go              # клиент Kubernetes API и «kubectl в браузере»
 │   ├── web/index.html       # UI (вшит в бинарник через go:embed)
 │   └── Dockerfile
 ├── k8s/
 │   ├── kustomization.yaml   # kubectl apply -k k8s/
 │   ├── namespace.yaml
-│   ├── app/                 # ConfigMap, Deployment, Service (NodePort)
+│   ├── app/                 # ConfigMap, Deployment, Service (NodePort), RBAC
 │   ├── postgres/            # Secret, headless Service, StatefulSet
 │   └── extras/              # HPA, генератор нагрузки, PDB, Ingress: по желанию
-├── scripts/                 # smoke-тест и тест rolling update без даунтайма
+├── scripts/                 # smoke, rolling update без даунтайма, сохранность данных
 ├── kind-config.yaml         # локальный кластер: 1 control-plane + 2 worker
 ├── docker-compose.yml       # запуск без Kubernetes
 └── Makefile                 # make help
@@ -118,6 +123,7 @@ kubectl -n kube-demo scale deployment/kube-demo --replicas=6
 kubectl -n kube-demo scale deployment/kube-demo --replicas=2
 ```
 
+То же самое — кнопками `−` / `+` и **Scale** в блоке «Кластер» (см. п. 8).
 Новые поды появляются в ленте UI через пару секунд, когда пройдут readiness-пробу.
 Благодаря `topologySpreadConstraints` они раскладываются по разным нодам (колонка `NODE`).
 
@@ -213,7 +219,60 @@ StatefulSet пересоздаст под **с тем же именем** `postg
 503 «хранилище недоступно», но поды приложения остаются Ready (см. п. 4), а пул
 соединений `pgx` сам переподключается.
 
-### 8. Внутри кластера: DNS, env, exec
+### 8. kubectl в браузере
+
+![Кластер](docs/cluster.png)
+
+Блок **«Кластер»** в UI показывает то же, что `kubectl get deploy,rs,pods`, и обновляется
+раз в 2 секунды. Кнопки делают то же, что команды:
+
+| В UI | Команда | Запрос к Kubernetes API |
+|---|---|---|
+| `−` / `+` и **Scale** | `kubectl scale deployment/kube-demo --replicas=N` | `PATCH deployments/kube-demo/scale` |
+| **🔄 Rollout restart** | `kubectl rollout restart deployment/kube-demo` | `PATCH deployments/kube-demo` (аннотация `restartedAt`) |
+| **🗑 delete** у пода | `kubectl delete pod <name>` | `DELETE pods/<name>` |
+
+Эквивалентная команда появляется в логе под таблицей. На что посмотреть:
+
+- при scale появляются поды `ContainerCreating` → `Running`, а при уменьшении — `Terminating`;
+- при rollout restart создаётся новый ReplicaSet (revision +1), старый плавно уходит в 0;
+- после удаления пода Deployment тут же создаёт замену с новым именем.
+
+Приложение ходит в API **от своего ServiceAccount**, без client-go: токен и CA kubelet
+монтирует в каждый под. Права описаны в [`k8s/app/rbac.yaml`](k8s/app/rbac.yaml): только свой
+namespace, `scale`/`patch` только для deployment `kube-demo`, удалять можно только поды демки.
+
+```bash
+kubectl -n kube-demo auth can-i --list --as=system:serviceaccount:kube-demo:kube-demo
+kubectl -n kube-demo auth can-i delete deployments --as=system:serviceaccount:kube-demo:kube-demo   # no
+```
+
+> Это демо: любой, кто открыл страницу, может масштабировать и удалять поды. Не выставляйте её наружу.
+
+### 9. Данные переживают смену подов
+
+![Проверка сохранности данных](docs/persistence.png)
+
+Блок **«Проверка сохранности данных»**:
+
+1. напишите пару сообщений в гостевую книгу и нажмите **📸 Сделать снимок**: приложение сохранит
+   в базу число сообщений и SHA-256 от их содержимого;
+2. нажмите **🗑 Удалить под-автора**, **🗑 Удалить postgres-0** или **💣 Пересоздать всё**
+   (rollout restart + удаление базы);
+3. проверка запускается сама каждые 2 секунды: пока база поднимается, будет «⏳ ждём», потом
+   «✅ Данные на месте: 5 из 5 сообщ., SHA-256 совпадает. Снимок сделал kube-demo-…-x7k2p — его
+   уже нет в кластере; проверил kube-demo-…-m4n9q».
+
+Для контраста переключитесь на `STORAGE=memory` (см. п. 7) и повторите: после удаления пода
+будет «❌ снимок не найден: данные потеряны».
+
+То же самое автоматически, в настоящем кластере (этот тест гоняется в CI):
+
+```bash
+make persistence
+```
+
+### 10. Внутри кластера: DNS, env, exec
 
 ```bash
 kubectl -n kube-demo exec -it deploy/kube-demo -- sh
@@ -223,7 +282,7 @@ kubectl -n kube-demo exec -it deploy/kube-demo -- sh
   wget -qO- http://kube-demo/api/hello      # запрос через сервис изнутри
 ```
 
-### 9. Автомасштабирование (HPA)
+### 11. Автомасштабирование (HPA)
 
 ```bash
 make metrics-server          # в kind его нет из коробки
@@ -236,7 +295,7 @@ make hpa-off                 # через минуту-другую реплик
 Генератор нагрузки дёргает `/api/burn`, который честно жжёт CPU. Проценты в HPA
 считаются **от `requests.cpu`** (50m), а не от лимита.
 
-### 10. Обслуживание ноды: drain и PodDisruptionBudget
+### 12. Обслуживание ноды: drain и PodDisruptionBudget
 
 ```bash
 kubectl apply -f k8s/extras/pdb.yaml                        # не меньше 2 живых реплик
@@ -261,6 +320,12 @@ kubectl uncordon kube-demo-worker2
 | POST | `/api/chaos/crash` | завершить процесс с кодом 1 |
 | POST | `/api/chaos/sick` | `/healthz` начнёт отвечать 500 |
 | POST | `/api/chaos/unready?seconds=30` | `/readyz` отвечает 503 N секунд |
+| GET | `/api/k8s/state` | ≈ `kubectl get deploy,rs,pods` |
+| PUT | `/api/k8s/replicas` | ≈ `kubectl scale`, тело `{"replicas": 5}` (1..10) |
+| POST | `/api/k8s/restart` | ≈ `kubectl rollout restart` |
+| DELETE | `/api/k8s/pods/{name}` | ≈ `kubectl delete pod` (только поды демки) |
+| POST | `/api/snapshots` | снимок гостевой книги: число сообщений + SHA-256 |
+| GET | `/api/snapshots/{id}` | сверить текущие данные со снимком |
 | GET | `/healthz` | liveness |
 | GET | `/readyz` | readiness |
 
@@ -278,6 +343,7 @@ kubectl uncordon kube-demo-worker2
 | `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `demo`, `-`, `demo` | Secret |
 | `POD_NAME`, `POD_NAMESPACE`, `POD_IP`, `NODE_NAME` | hostname, `-` | Downward API |
 | `SHUTDOWN_DELAY` | `5s` | ConfigMap |
+| `DEPLOYMENT_NAME` | `kube-demo` | Deployment, которым управляет UI |
 
 ## Без Kubernetes
 
@@ -296,7 +362,7 @@ make test                       # юнит-тесты
 
 1. `gofmt`, `go vet`, тесты с `-race` (включая интеграционный тест на Postgres);
 2. валидация манифестов `kubeconform`;
-3. **e2e в настоящем kind-кластере**: деплой, `make smoke` и `make zero-downtime`;
+3. **e2e в настоящем kind-кластере**: деплой, `make smoke`, `make zero-downtime` и `make persistence`;
 4. из `main` и тегов `v*` публикуется multi-arch образ (amd64 + arm64)
    `ghcr.io/thescarletarrow/kube-demo`. Новый пакет в GHCR по умолчанию приватный:
    сделайте его публичным в настройках пакета или добавьте `imagePullSecret`.
