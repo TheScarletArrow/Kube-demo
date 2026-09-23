@@ -9,12 +9,16 @@ NS="${NS:-kube-demo}"
 k() { kubectl -n "$NS" "$@"; }
 fail() { echo "❌ $*" >&2; k get pods -o wide >&2 || true; exit 1; }
 ok() { echo "✅ $*"; }
-json() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+# json <ключ>: первое строковое значение ключа из JSON на stdin (без jq и без SIGPIPE).
+json() { local v; v=$(grep -o "\"$1\":\"[^\"]*\"" || true); v=${v%%$'\n'*}; v=${v#*:\"}; echo "${v%\"}"; }
 retry() { # retry <секунд> <описание> <команда...>
   local timeout=$1 what=$2; shift 2
   for _ in $(seq 1 "$timeout"); do "$@" >/dev/null 2>&1 && return 0; sleep 1; done
   fail "не дождались: $what"
 }
+# contains <текст> <подстрока>. Не `cmd | grep -q`: при pipefail grep -q закрывает
+# pipe на первом совпадении, cmd получает SIGPIPE, и проверка ложно падает.
+contains() { grep -qF -- "$2" <<<"$1"; }
 app_pod() { k get pods -l app=kube-demo --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'; }
 
 network_policy() {
@@ -26,7 +30,7 @@ network_policy() {
   fi
   k run np-allow --rm -i --restart=Never --labels=postgres-access=true --image=postgres:16-alpine --command -- pg_isready -h postgres -t 5 \
     || fail "под с меткой postgres-access не достучался до базы"
-  curl -sf "$URL/api/hello" | grep -q '"storage":"postgres"' || fail "приложение потеряло доступ к базе"
+  contains "$(curl -sf "$URL/api/hello")" '"storage":"postgres"' || fail "приложение потеряло доступ к базе"
   ok "к базе пускают только поды с меткой postgres-access=true"
 }
 
@@ -37,7 +41,7 @@ sidecar() {
     ready=$(k get "$pod" -o jsonpath='{.status.initContainerStatuses[?(@.name=="access-log")].ready}')
     [ "$ready" = true ] || fail "$pod: sidecar access-log не ready"
   done
-  k logs -l app=kube-demo -c access-log --tail=100 | grep -q "GET /api/hello 200" || fail "в логах sidecar'а нет запросов"
+  contains "$(k logs -l app=kube-demo -c access-log --tail=100)" "GET /api/hello 200" || fail "в логах sidecar'а нет запросов"
   ok "sidecar работает во всех подах, access-лог виден через kubectl logs -c access-log"
 }
 
@@ -57,7 +61,8 @@ backup() {
   job=$(curl -sf -X POST "$URL/api/k8s/backup" | json job)
   [ -n "$job" ] || fail "приложение не создало Job"
   k wait --for=condition=complete "job/$job" --timeout=180s || { k logs "job/$job" || true; fail "Job $job не завершился"; }
-  k logs "job/$job" | grep "backup ok" || fail "в логах Job нет 'backup ok'"
+  logs=$(k logs "job/$job"); echo "$logs"
+  contains "$logs" "backup ok" || fail "в логах Job нет 'backup ok'"
   ok "Job $job из CronJob сделал дамп базы"
 }
 
@@ -115,7 +120,7 @@ quota() {
 
 observability() {
   echo "→ метрики и Prometheus"
-  curl -sf "$URL/metrics" | grep -q '^kube_demo_http_requests_total' || fail "/metrics без счётчиков"
+  contains "$(curl -sf "$URL/metrics")" 'kube_demo_http_requests_total{' || fail "/metrics без счётчиков"
   kubectl apply -f k8s/extras/observability/prometheus.yaml
   k rollout status deployment/prometheus --timeout=180s
   retry 90 "Prometheus видит 3+ пода" sh -c \
@@ -141,7 +146,8 @@ gateway() {
   echo "   из 60 запросов: основная версия $main, canary $canary"
   [ "$canary" -ge 2 ] && [ "$main" -ge 30 ] || fail "веса 80/20 не соблюдаются"
   for _ in $(seq 1 10); do
-    curl -sf -H 'X-Canary: always' http://localhost:30081/api/hello | json pod | grep -q '^kube-demo-canary-' || fail "X-Canary: always не ведёт на canary"
+    pod=$(curl -sf -H 'X-Canary: always' http://localhost:30081/api/hello | json pod)
+    [[ "$pod" == kube-demo-canary-* ]] || fail "X-Canary: always привёл на $pod, а не на canary"
   done
   ok "Gateway делит трафик ~80/20, заголовок X-Canary: always ведёт на canary"
 }
