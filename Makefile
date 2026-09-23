@@ -97,7 +97,8 @@ prometheus: ## Prometheus с автопоиском подов -> http://localho
 	kubectl apply -f k8s/extras/observability/prometheus.yaml
 	kubectl -n $(NS) rollout status deployment/prometheus --timeout=180s
 
-GATEWAY_API ?= v1.4.0
+# Traefik 3.7 ждёт TLSRoute v1 — он есть в стандартном канале Gateway API начиная с v1.5
+GATEWAY_API ?= v1.5.1
 TRAEFIK_CHART ?= 41.6.0
 
 gateway-install: ## CRD Gateway API + Traefik (helm) -> http://localhost:30081

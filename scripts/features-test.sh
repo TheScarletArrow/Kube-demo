@@ -131,7 +131,7 @@ observability() {
 
 gateway() {
   echo "→ Gateway API (Traefik) + canary"
-  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
   helm repo add traefik https://traefik.github.io/charts >/dev/null
   helm upgrade --install traefik traefik/traefik --version 41.6.0 -n traefik --create-namespace \
     -f k8s/extras/gateway/traefik-values.yaml
