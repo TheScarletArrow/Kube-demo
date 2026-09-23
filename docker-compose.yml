@@ -1,0 +1,36 @@
+# Быстрый запуск без Kubernetes, чтобы потыкать приложение:
+#   docker compose up --build   ->   http://localhost:8080
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo-password
+      POSTGRES_DB: demo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d demo"]
+      interval: 2s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: ./app
+      args:
+        VERSION: compose
+    ports:
+      - "8080:8080"
+    environment:
+      STORAGE: postgres
+      DB_HOST: postgres
+      DB_USER: demo
+      DB_PASSWORD: demo-password
+      DB_NAME: demo
+      NODE_NAME: docker-compose
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

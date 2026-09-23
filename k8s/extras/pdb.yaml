@@ -1,0 +1,14 @@
+# PodDisruptionBudget: при добровольных «разрушениях» (kubectl drain,
+# обновление нод) Kubernetes не даст опустить число живых реплик ниже 2.
+#   kubectl apply -f k8s/extras/pdb.yaml
+#   kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kube-demo
+  namespace: kube-demo
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: kube-demo

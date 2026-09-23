@@ -1,0 +1,30 @@
+# Всё приложение одной командой:
+#   kubectl apply -k k8s/
+#
+# Посмотреть, что именно будет применено:
+#   kubectl kustomize k8s/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kube-demo
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: kube-demo
+
+resources:
+  - namespace.yaml
+  - postgres/secret.yaml
+  - postgres/service.yaml
+  - postgres/statefulset.yaml
+  - app/configmap.yaml
+  - app/deployment.yaml
+  - app/service.yaml
+
+# Какой образ приложения использовать. Для кластера без локальной сборки
+# можно взять опубликованный CI образ:
+#   newName: ghcr.io/thescarletarrow/kube-demo
+#   newTag: latest
+images:
+  - name: kube-demo
+    newTag: 1.0.0

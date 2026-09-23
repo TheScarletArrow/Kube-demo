@@ -1,0 +1,27 @@
+# Горизонтальное автомасштабирование по CPU. Нужен metrics-server
+# (см. README, в kind его надо поставить отдельно).
+#   kubectl apply -f k8s/extras/hpa.yaml
+#   kubectl -n kube-demo get hpa -w
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kube-demo
+  namespace: kube-demo
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kube-demo
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50 # % от requests.cpu (50m)
+  behavior:
+    # По умолчанию HPA ждёт 5 минут перед уменьшением — для демо ускоряем.
+    scaleDown:
+      stabilizationWindowSeconds: 30

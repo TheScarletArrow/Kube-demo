@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kube Demo</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #6b7280;
+    --border: #e3e6eb; --danger: #dc2626; --ok: #16a34a; --accent: royalblue;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1218; --card: #171b24; --text: #e6e8ec; --muted: #9aa3b2; --border: #2a303c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0 auto 0 0; }
+  .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+           background: var(--card); color: var(--muted); font-family: var(--mono); }
+  .badge.pg { color: var(--ok); border-color: currentColor; }
+  .badge.mem { color: #d97706; border-color: currentColor; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+             margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .spacer { flex: 1; }
+  .card h2 button { font-weight: 400; text-transform: none; letter-spacing: 0; padding: 4px 10px; }
+  .grid2 { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .hero { border-left: 6px solid var(--accent); }
+  .hero .greeting { color: var(--muted); }
+  .hero .pod { font: 600 clamp(20px, 4.5vw, 34px)/1.2 var(--mono); word-break: break-all; margin: 4px 0 14px; }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .meta div { font-size: 13px; color: var(--muted); }
+  .meta b { display: block; color: var(--text); font: 500 14px var(--mono); word-break: break-all; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--accent);
+            vertical-align: -1px; margin-right: 6px; border: 1px solid var(--border); }
+
+  button { font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+           border: 1px solid var(--border); background: var(--card); color: var(--text); }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  .feed { display: flex; flex-wrap: wrap; gap: 4px; min-height: 30px; margin-top: 12px; }
+  .chip { font: 12px var(--mono); padding: 4px 6px 2px; border-radius: 5px; color: #fff;
+          border-bottom: 4px solid transparent; }
+  .chip.err { background: var(--danger); }
+  .legend { margin-top: 10px; display: grid; gap: 4px; font-size: 13px; }
+  .legend span { font-family: var(--mono); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+
+  .bars { display: grid; gap: 8px; }
+  .bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; font-size: 13px; }
+  .bar .name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .name.stale { color: var(--muted); text-decoration: line-through; }
+  .bar .track { grid-column: 1 / -1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 4px; transition: width .4s; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+  form { display: grid; gap: 8px; grid-template-columns: 140px 1fr auto; }
+  @media (max-width: 560px) { form { grid-template-columns: 1fr; } }
+  input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+          background: var(--bg); color: var(--text); min-width: 0; }
+  .msgs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; max-height: 320px; overflow: auto; }
+  .msgs li { padding: 8px 10px; border-radius: 8px; background: var(--bg); }
+  .msgs .who { font-size: 12px; color: var(--muted); }
+  .msgs .who span { font-family: var(--mono); }
+  .msgs .text { white-space: pre-wrap; word-break: break-word; }
+
+  .log { font: 12px/1.5 var(--mono); background: var(--bg); border-radius: 8px; padding: 8px 10px;
+         margin-top: 12px; min-height: 40px; max-height: 140px; overflow: auto; white-space: pre-wrap; }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  .hints { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>☸️ Kube Demo</h1>
+    <span class="badge" id="version">v?</span>
+    <span class="badge" id="storage">storage: ?</span>
+  </header>
+
+  <section class="card hero">
+    <div class="greeting" id="greeting">Этот ответ отдал под</div>
+    <div class="pod" id="pod">…</div>
+    <div class="meta">
+      <div>Нода<b id="node">-</b></div>
+      <div>IP пода<b id="podIP">-</b></div>
+      <div>Namespace<b id="ns">-</b></div>
+      <div>Цвет версии<b><span class="swatch"></span><span id="color">-</span></b></div>
+      <div>Аптайм пода<b id="uptime">-</b></div>
+      <div>Визиты: под / всего<b id="visits">-</b></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Балансировка <span class="spacer"></span>
+      <span id="rate" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div class="row">
+      <button class="primary" id="live">▶ Live: 2 запроса/с</button>
+      <button id="once">Один запрос</button>
+      <button id="clearFeed">Очистить</button>
+    </div>
+    <div class="feed" id="feed"></div>
+    <div class="legend" id="legend"></div>
+    <div class="note">Каждый квадратик — один запрос к сервису. Цвет — под, полоска снизу — цвет версии
+      (видно во время rolling update). Красный — ошибка: во время обновления их быть не должно.</div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Визиты по подам <span class="spacer"></span><button id="reset">Сбросить</button></h2>
+      <div class="bars" id="bars"></div>
+      <div class="note" id="statsNote"></div>
+    </section>
+
+    <section class="card">
+      <h2>Гостевая книга</h2>
+      <form id="msgForm">
+        <input id="author" placeholder="Имя" maxlength="40">
+        <input id="text" placeholder="Сообщение" maxlength="280" required>
+        <button class="primary">Отправить</button>
+      </form>
+      <ul class="msgs" id="msgs"></ul>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Хаос-инжиниринг</h2>
+    <div class="row">
+      <button class="danger" data-chaos="crash" title="Процесс завершится с exit 1">💥 Уронить под</button>
+      <button class="danger" data-chaos="sick" title="/healthz начнёт отвечать 500">🤒 Сломать liveness</button>
+      <button class="danger" data-chaos="unready" title="/readyz ответит 503 в течение 30 секунд">🙈 Not ready на 30 с</button>
+      <button data-burn title="Нагрузить CPU пода на 2 секунды">🔥 Нагрузить CPU (2 с)</button>
+    </div>
+    <div class="log" id="log">Действие применяется к тому поду, который обработает запрос.</div>
+  </section>
+
+  <section class="card hints">
+    <h2>Что смотреть в терминале</h2>
+    <div><code>kubectl -n kube-demo get pods -o wide -w</code> — поды, ноды, RESTARTS, READY</div>
+    <div><code>kubectl -n kube-demo get endpointslices -w</code> — кто сейчас в балансировке</div>
+    <div><code>kubectl -n kube-demo logs -l app=kube-demo -f --prefix</code> — логи всех подов</div>
+    <div><code>kubectl -n kube-demo set env deploy/kube-demo APP_COLOR=seagreen</code> — rolling update</div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const FEED_SIZE = 60;
+let liveTimer = null;
+const feed = [];
+
+// Поды красим по порядку появления из контрастной палитры (без красного —
+// он зарезервирован за ошибками). Когда палитра кончится — цвет по хэшу имени.
+const PALETTE = ["#2563eb", "#e07b00", "#16a34a", "#9333ea", "#0891b2", "#db2777", "#65a30d", "#8b5e34"];
+const podColors = new Map();
+function podColor(name) {
+  if (!podColors.has(name)) {
+    let h = 2166136261;
+    for (const c of name) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+    podColors.set(name, PALETTE[podColors.size] ?? `hsl(${35 + (Math.abs(h) % 290)} 62% 46%)`);
+  }
+  return podColors.get(name);
+}
+const shortPod = (name) => name.split("-").pop();
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { cache: "no-store", ...opts });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
+  return body;
+}
+
+function renderInfo(d) {
+  document.documentElement.style.setProperty("--accent", d.color);
+  $("greeting").textContent = `${d.greeting}! Этот ответ отдал под`;
+  $("pod").textContent = d.pod;
+  $("node").textContent = d.node;
+  $("podIP").textContent = d.podIP;
+  $("ns").textContent = d.namespace;
+  $("color").textContent = d.color;
+  $("uptime").textContent = d.uptime;
+  $("visits").textContent = `${d.podVisits} / ${d.totalVisits}`;
+  $("version").textContent = d.version;
+  $("storage").textContent = `storage: ${d.storage}`;
+  $("storage").className = "badge " + (d.storage === "postgres" ? "pg" : "mem");
+}
+
+function pushFeed(item) {
+  feed.push(item);
+  if (feed.length > FEED_SIZE) feed.shift();
+  const el = $("feed");
+  el.replaceChildren(...feed.map((f) => {
+    const c = document.createElement("span");
+    if (f.error) {
+      c.className = "chip err";
+      c.textContent = "ERR";
+      c.title = f.error;
+    } else {
+      c.className = "chip";
+      c.textContent = shortPod(f.pod);
+      c.title = `${f.pod} · ${f.version} · ${f.color}`;
+      c.style.background = podColor(f.pod);
+      c.style.borderBottomColor = f.color;
+    }
+    return c;
+  }));
+
+  const counts = new Map();
+  for (const f of feed) {
+    const key = f.error ? "ошибки" : f.pod;
+    const cur = counts.get(key) || { n: 0, version: f.version || "" };
+    cur.n++;
+    counts.set(key, cur);
+  }
+  $("legend").replaceChildren(...[...counts].sort().map(([pod, v]) => {
+    const row = document.createElement("div");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = pod === "ошибки" ? "var(--danger)" : podColor(pod);
+    const name = document.createElement("span");
+    name.textContent = pod;
+    row.append(dot, name, ` — ${v.n} из ${feed.length}` + (v.version ? ` (${v.version})` : ""));
+    return row;
+  }));
+  const pods = [...counts.keys()].filter((k) => k !== "ошибки").length;
+  $("rate").textContent = `подов в выборке: ${pods}`;
+}
+
+async function hello() {
+  try {
+    const d = await api("/api/hello");
+    renderInfo(d);
+    pushFeed(d);
+  } catch (e) {
+    pushFeed({ error: e.message });
+  }
+}
+
+async function loadStats() {
+  try {
+    const d = await api("/api/stats");
+    const max = Math.max(1, ...d.pods.map((p) => p.visits));
+    const now = Date.now();
+    $("bars").replaceChildren(...d.pods.map((p) => {
+      const stale = now - new Date(p.lastSeen).getTime() > 30000;
+      const row = document.createElement("div");
+      row.className = "bar";
+      row.innerHTML = `<span class="name"></span><span></span><div class="track"><div class="fill"></div></div>`;
+      row.children[0].textContent = p.pod;
+      row.children[0].title = stale ? "Давно не отвечал — вероятно, под уже удалён" : p.pod;
+      row.children[0].classList.toggle("stale", stale);
+      row.children[1].textContent = p.visits;
+      const fill = row.querySelector(".fill");
+      fill.style.width = `${(p.visits / max) * 100}%`;
+      fill.style.background = podColor(p.pod);
+      return row;
+    }));
+    $("statsNote").textContent = d.storage === "memory"
+      ? `⚠️ Хранилище в памяти: эти цифры знает только под ${d.servedBy}. Обновите — ответит другой под со своей «правдой».`
+      : `Данные из Postgres — общие для всех подов. Ответил ${d.servedBy}.`;
+  } catch (e) {
+    $("statsNote").textContent = "Ошибка: " + e.message;
+  }
+}
+
+async function loadMessages() {
+  try {
+    const d = await api("/api/messages");
+    $("msgs").replaceChildren(...d.messages.map((m) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<div class="who"><b></b> · через под <span></span> · <time></time></div><div class="text"></div>`;
+      li.querySelector("b").textContent = m.author;
+      li.querySelector("span").textContent = m.pod;
+      li.querySelector("time").textContent = new Date(m.createdAt).toLocaleTimeString();
+      li.querySelector(".text").textContent = m.text;
+      return li;
+    }));
+    if (!d.messages.length) $("msgs").innerHTML = `<li class="who">Пока пусто — напишите первым.</li>`;
+  } catch (e) {
+    $("msgs").innerHTML = "";
+    const li = document.createElement("li");
+    li.textContent = "Ошибка: " + e.message;
+    $("msgs").append(li);
+  }
+}
+
+function log(line) {
+  const el = $("log");
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
+}
+
+$("live").onclick = () => {
+  if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+    $("live").textContent = "▶ Live: 2 запроса/с";
+    return;
+  }
+  let tick = 0;
+  liveTimer = setInterval(() => {
+    hello();
+    if (++tick % 4 === 0) loadStats();
+    if (tick % 8 === 0) loadMessages();
+  }, 500);
+  $("live").textContent = "⏸ Пауза";
+};
+$("once").onclick = () => { hello(); loadStats(); };
+$("clearFeed").onclick = () => {
+  feed.length = 0;
+  $("feed").replaceChildren();
+  $("legend").replaceChildren();
+  $("rate").textContent = "";
+};
+$("reset").onclick = async () => {
+  try { await api("/api/stats", { method: "DELETE" }); } catch (e) { log("Сброс не удался: " + e.message); }
+  loadStats();
+};
+
+$("msgForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const m = await api("/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ author: $("author").value, text: $("text").value }),
+    });
+    $("text").value = "";
+    log(`Сообщение #${m.id} сохранил под ${m.pod}`);
+    loadMessages();
+  } catch (err) {
+    log("Не удалось отправить: " + err.message);
+  }
+};
+
+document.querySelectorAll("[data-chaos]").forEach((btn) => {
+  btn.onclick = async () => {
+    const action = btn.dataset.chaos;
+    try {
+      const r = await api(`/api/chaos/${action}`, { method: "POST" });
+      const what = {
+        crash: "упадёт через мгновение — смотрите на RESTARTS",
+        sick: "провалит liveness-пробы, и kubelet перезапустит контейнер (~15 с)",
+        unready: `будет NOT READY ${r.seconds} с — трафик на него не пойдёт, но и рестарта не будет`,
+      }[action];
+      log(`Под ${r.pod} ${what}`);
+    } catch (e) {
+      log(`Ошибка (${action}): ${e.message}`);
+    }
+  };
+});
+document.querySelector("[data-burn]").onclick = async () => {
+  log("Жжём CPU 2 секунды…");
+  try {
+    const r = await api("/api/burn?ms=2000");
+    log(`Под ${r.pod} честно грел процессор ${r.burnedMs} мс`);
+  } catch (e) {
+    log("Ошибка: " + e.message);
+  }
+};
+
+hello();
+loadStats();
+loadMessages();
+</script>
+</body>
+</html>

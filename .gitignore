@@ -1,0 +1,7 @@
+# бинарник после `go build`
+/app/kube-demo
+*.test
+*.out
+.idea/
+.vscode/
+.DS_Store

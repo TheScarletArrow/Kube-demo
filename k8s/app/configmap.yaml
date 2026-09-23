@@ -1,0 +1,16 @@
+# Конфигурация приложения. Поменяли значение -> примените и сделайте
+#   kubectl -n kube-demo rollout restart deployment/kube-demo
+# (env из ConfigMap читается только при старте контейнера).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-demo
+  labels:
+    app: kube-demo
+data:
+  APP_COLOR: royalblue     # любой CSS-цвет: цвет «версии» в UI
+  GREETING: Привет
+  STORAGE: postgres        # postgres | memory
+  DB_HOST: postgres        # DNS-имя сервиса Postgres в том же namespace
+  DB_PORT: "5432"
+  SHUTDOWN_DELAY: 5s       # пауза после SIGTERM перед остановкой HTTP-сервера
