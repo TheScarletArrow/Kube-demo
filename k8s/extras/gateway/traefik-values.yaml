@@ -4,6 +4,13 @@
 providers:
   kubernetesGateway:
     enabled: true
+    # Адрес для status.addresses у Gateway. По умолчанию Traefik копирует его из
+    # LoadBalancer-статуса своего Service, но у NodePort (kind) его нет, и Gateway
+    # остаётся без адреса (Programmed=False).
+    statusAddress:
+      ip: 127.0.0.1
+      service:
+        enabled: false
   kubernetesIngress:
     enabled: true # заодно работает и классический Ingress (k8s/extras/ingress.yaml)
 gateway:

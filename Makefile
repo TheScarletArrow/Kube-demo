@@ -104,7 +104,9 @@ gateway-install: ## CRD Gateway API + Traefik (helm) -> http://localhost:30081
 	kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API)/standard-install.yaml
 	helm repo add traefik https://traefik.github.io/charts
 	helm upgrade --install traefik traefik/traefik --version $(TRAEFIK_CHART) -n traefik --create-namespace \
-		-f k8s/extras/gateway/traefik-values.yaml --wait
+		-f k8s/extras/gateway/traefik-values.yaml
+	kubectl -n traefik rollout status deployment/traefik --timeout=180s
+	kubectl wait --for=condition=Programmed gateway/traefik-gateway -n traefik --timeout=120s
 
 gateway-on: ## Canary-версия + HTTPRoute 80/20
 	kubectl apply -f k8s/extras/gateway/canary.yaml -f k8s/extras/gateway/httproute.yaml

@@ -134,10 +134,21 @@ gateway() {
   kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
   helm repo add traefik https://traefik.github.io/charts >/dev/null
   helm upgrade --install traefik traefik/traefik --version 41.6.0 -n traefik --create-namespace \
-    -f k8s/extras/gateway/traefik-values.yaml --wait --timeout 5m
+    -f k8s/extras/gateway/traefik-values.yaml
+  gateway_debug() {
+    kubectl -n traefik get all,gateway,events -o wide || true
+    kubectl -n traefik describe pods || true
+    kubectl -n traefik logs deploy/traefik --tail=80 || true
+    kubectl get gatewayclass -o yaml || true
+    kubectl -n traefik get gateway -o yaml || true
+    k get httproute -o yaml || true
+  }
+  kubectl -n traefik rollout status deployment/traefik --timeout=180s || { gateway_debug; fail "Traefik не поднялся"; }
+  kubectl -n traefik wait --for=condition=Programmed gateway/traefik-gateway --timeout=120s || { gateway_debug; fail "Gateway не Programmed"; }
   kubectl apply -f k8s/extras/gateway/canary.yaml -f k8s/extras/gateway/httproute.yaml
   k rollout status deployment/kube-demo-canary --timeout=180s
-  retry 60 "HTTPRoute принят" sh -c "curl -sf http://localhost:30081/api/hello"
+  for _ in $(seq 1 60); do curl -sf http://localhost:30081/api/hello >/dev/null && break; sleep 1; done
+  curl -sf http://localhost:30081/api/hello >/dev/null || { gateway_debug; fail "через Gateway не отвечает"; }
   canary=0; main=0
   for _ in $(seq 1 60); do
     pod=$(curl -sf http://localhost:30081/api/hello | json pod)
