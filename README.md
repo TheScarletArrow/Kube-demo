@@ -480,6 +480,44 @@ kubectl -n kube-demo exec <pod> -c app -- cat /sys/fs/cgroup/cpu.max    # 100000
 
 Deployment при этом не меняется: следующий пересозданный под снова получит ресурсы из шаблона.
 
+### 23. Отказ ноды и карта кластера
+
+Блок **«Карта кластера»** показывает ноды колонками и поды внутри них: какая реплика на какой
+ноде, где база, где агенты DaemonSet'а, у кого есть taints, какая нода в cordon.
+
+**Плановое обслуживание.** Кнопки **Cordon** и **Drain** на карточке ноды делают то же, что
+`kubectl cordon` / `kubectl drain --ignore-daemonsets` (но только для подов демки). Drain
+выселяет поды через Eviction API, а значит уважает PodDisruptionBudget (`k8s/extras/pdb.yaml`).
+Поды переезжают на другие ноды, агенты DaemonSet'а остаются.
+
+**Авария.**
+
+```bash
+kubectl -n kube-demo get pod postgres-0 -o wide   # выберите воркер БЕЗ базы
+make node-down NODE=kube-demo-worker2             # docker pause: нода «зависла»
+make watch RPS=10                                 # во втором терминале
+```
+
+Что будет происходить (в UI включите Live):
+
+1. Первые ~40–50 с Kubernetes ещё не знает, что нода мертва: часть запросов уходит на поды
+   замёрзшей ноды и падает по таймауту — в ленте балансировки красные квадратики.
+2. Нода становится `NotReady` (в карте — красная, «не отвечает»), её поды перестают быть Ready и
+   выпадают из балансировки. Ошибки прекращаются. На ноду вешается taint `unreachable:NoExecute`.
+3. Через `tolerationSeconds: 20` (по умолчанию 300 с!) поды приложения получают `Terminating`,
+   и Deployment создаёт замену на живых нодах.
+4. Агент DaemonSet'а никуда не переезжает: он по определению привязан к своей ноде.
+
+```bash
+make node-up                                      # нода вернулась, зависшие Terminating-поды удаляются
+```
+
+**Если упадёт нода с базой** (`make node-down NODE=<нода postgres-0>`), `postgres-0` повиснет в
+`Terminating` и **не** будет пересоздан: StatefulSet гарантирует «не больше одного» экземпляра и
+не может знать, умер под или просто потерял сеть. Можно удалить его силой
+(`kubectl delete pod postgres-0 --force --grace-period=0`), но новый под останется `Pending`:
+том `local-path` физически лежит на мёртвой ноде. Хороший повод поговорить о сетевых хранилищах.
+
 ## API
 
 | Метод | Путь | Что делает |
@@ -503,6 +541,7 @@ Deployment при этом не меняется: следующий перес�
 | GET | `/api/nodes` | инфо о нодах от агентов DaemonSet'а |
 | POST | `/api/chaos/oom` | есть память, пока ядро не убьёт контейнер (OOMKilled) |
 | GET | `/metrics` | метрики Prometheus |
+| POST | `/api/k8s/nodes/{name}/cordon` · `uncordon` · `drain` | ≈ `kubectl cordon` / `uncordon` / `drain` (drain — только поды демки) |
 | POST | `/api/snapshots` | снимок гостевой книги: число сообщений + SHA-256 |
 | GET | `/api/snapshots/{id}` | сверить текущие данные со снимком |
 | GET | `/healthz` | liveness |
@@ -546,7 +585,7 @@ make test                       # юнит-тесты
 2. валидация манифестов `kubeconform`;
 3. **e2e в настоящем kind-кластере**: деплой, `make smoke`, `make zero-downtime`, `make persistence`
    и отдельный шаг на каждую фичу из `make features`: NetworkPolicy, sidecar, DaemonSet, CronJob,
-   resize, OOMKilled, сломанный релиз, квоты, Prometheus, Gateway API;
+   resize, OOMKilled, сломанный релиз, квоты, Prometheus, Gateway API, drain и отказ ноды;
 4. из `main` и тегов `v*` публикуется multi-arch образ (amd64 + arm64)
    `ghcr.io/thescarletarrow/kube-demo`. Новый пакет в GHCR по умолчанию приватный:
    сделайте его публичным в настройках пакета или добавьте `imagePullSecret`.

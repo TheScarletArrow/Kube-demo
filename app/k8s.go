@@ -283,17 +283,20 @@ type k8sCronJob struct {
 // ---------- то, что отдаём в UI (как колонки kubectl get) ----------
 
 type podView struct {
-	Name      string    `json:"name"`
-	App       string    `json:"app"`
-	Owner     string    `json:"owner"`
-	Ready     string    `json:"ready"` // "2/2"
-	Status    string    `json:"status"`
-	Restarts  int32     `json:"restarts"`
-	Last      string    `json:"last"` // причина последнего падения: "OOMKilled (137)"
-	Node      string    `json:"node"`
-	IP        string    `json:"ip"`
-	CPU       string    `json:"cpu"` // requests/limits контейнера app: "50m/500m"
-	Resize    string    `json:"resize,omitempty"`
+	Name     string `json:"name"`
+	App      string `json:"app"`
+	Owner    string `json:"owner"`
+	Ready    string `json:"ready"` // "2/2"
+	Status   string `json:"status"`
+	Restarts int32  `json:"restarts"`
+	Last     string `json:"last"` // причина последнего падения: "OOMKilled (137)"
+	Node     string `json:"node"`
+	IP       string `json:"ip"`
+	CPU      string `json:"cpu"` // requests/limits контейнера app: "50m/500m"
+	Resize   string `json:"resize,omitempty"`
+	// PodReady — condition Ready пода. Когда нода умирает, kubelet уже ничего
+	// не обновит (READY у kubectl «застывает»), а node controller сбросит именно его.
+	PodReady  bool      `json:"podReady"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -351,6 +354,8 @@ type clusterState struct {
 	Events      []eventView      `json:"events"`
 	Jobs        []jobView        `json:"jobs"`
 	CronJob     *cronJobView     `json:"cronJob"`
+	Nodes       []nodeView       `json:"nodes"`
+	NodesError  string           `json:"nodesError,omitempty"`
 }
 
 func isSidecar(c k8sContainer) bool { return c.RestartPolicy == "Always" }
@@ -436,9 +441,13 @@ func toPodView(p k8sPod) podView {
 		}
 	}
 	resize := ""
+	podReady := false
 	for _, c := range p.Status.Conditions {
 		if (c.Type == "PodResizePending" || c.Type == "PodResizeInProgress") && c.Status == "True" {
 			resize = strings.TrimPrefix(c.Type, "PodResize")
+		}
+		if c.Type == "Ready" && c.Status == "True" {
+			podReady = true
 		}
 	}
 	return podView{
@@ -453,6 +462,7 @@ func toPodView(p k8sPod) podView {
 		IP:        p.Status.PodIP,
 		CPU:       cpu,
 		Resize:    resize,
+		PodReady:  podReady,
 		CreatedAt: p.Metadata.CreationTimestamp,
 	}
 }
@@ -472,6 +482,7 @@ func (c *kubeClient) State(ctx context.Context) (clusterState, error) {
 		Pods:        []podView{},
 		Events:      []eventView{},
 		Jobs:        []jobView{},
+		Nodes:       []nodeView{},
 	}
 
 	var d k8sDeployment
@@ -527,6 +538,11 @@ func (c *kubeClient) State(ctx context.Context) (clusterState, error) {
 	}
 	if jobs, err := c.Jobs(ctx); err == nil {
 		st.Jobs = jobs
+	}
+	if nodes, err := c.Nodes(ctx); err == nil {
+		st.Nodes = nodes
+	} else {
+		st.NodesError = err.Error()
 	}
 	if cj, err := c.CronJob(ctx, backupCronJob); err == nil {
 		st.CronJob = &cronJobView{

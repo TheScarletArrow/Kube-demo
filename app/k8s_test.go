@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -42,6 +43,8 @@ func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
 			"spec":{"containers":[{}]},"status":{"phase":"Running",
 			"containerStatuses":[{"state":{"waiting":{"reason":"CrashLoopBackOff"}},"restartCount":5}]}}`,
 		"someone-else": `{"metadata":{"name":"someone-else","labels":{"app":"other"}},"spec":{},"status":{}}`,
+		"node-agent-x": `{"metadata":{"name":"node-agent-x","labels":{"app":"node-agent"},
+			"ownerReferences":[{"kind":"DaemonSet","name":"node-agent"}]},"spec":{"containers":[{}]},"status":{}}`,
 	}}
 
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +106,23 @@ func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
 				items = append(items, p)
 			}
 			fmt.Fprintf(w, `{"items":[%s]}`, strings.Join(items, ","))
+		case r.Method == "GET" && r.URL.Path == "/api/v1/nodes":
+			fmt.Fprint(w, `{"items":[
+				{"metadata":{"name":"kind-worker"},"spec":{"unschedulable":true},
+				 "status":{"conditions":[{"type":"Ready","status":"Unknown","reason":"NodeStatusUnknown",
+				   "lastHeartbeatTime":"2026-01-01T00:00:00Z"}],"nodeInfo":{"kubeletVersion":"v1.33.1"}}},
+				{"metadata":{"name":"kind-control-plane","labels":{"node-role.kubernetes.io/control-plane":""}},
+				 "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]},
+				 "status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`)
+		case r.Method == "PATCH" && strings.HasPrefix(r.URL.Path, "/api/v1/nodes/"):
+			fmt.Fprint(w, `{}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/eviction"):
+			if strings.Contains(r.URL.Path, "postgres-0") {
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, `{"message":"Cannot evict pod as it would violate the pod's disruption budget."}`)
+				return
+			}
+			fmt.Fprint(w, `{}`)
 		case r.Method == "PATCH" && strings.HasSuffix(r.URL.Path, "/resize"):
 			fmt.Fprint(w, `{}`)
 		case strings.HasPrefix(r.URL.Path, nsPods+"/"):
@@ -431,5 +451,53 @@ func TestPodViewSidecarAndLastState(t *testing.T) {
 	v := toPodView(p)
 	if v.Status != "Running" || v.Ready != "2/2" || v.Last != "OOMKilled (137)" || v.CPU != "50m/500m" || v.Resize != "InProgress" {
 		t.Fatalf("%+v", v)
+	}
+}
+
+func TestNodesInState(t *testing.T) {
+	_, h := newKubeTestServer(t)
+	st := decode[struct{ State clusterState }](t, do(t, h, "GET", "/api/k8s/state", "")).State
+
+	if len(st.Nodes) != 2 || st.NodesError != "" {
+		t.Fatalf("nodes: %+v (%s)", st.Nodes, st.NodesError)
+	}
+	cp, w := st.Nodes[0], st.Nodes[1] // control-plane первой
+	if cp.Role != "control-plane" || cp.Status != "Ready" || len(cp.Taints) != 1 ||
+		cp.Taints[0] != "node-role.kubernetes.io/control-plane:NoSchedule" {
+		t.Errorf("control-plane: %+v", cp)
+	}
+	if w.Role != "worker" || w.Ready != "Unknown" || w.Status != "NotReady,SchedulingDisabled" ||
+		w.Kubelet != "v1.33.1" || w.LastHeartbeat.IsZero() {
+		t.Errorf("worker: %+v", w)
+	}
+}
+
+func TestCordonAndDrain(t *testing.T) {
+	f, h := newKubeTestServer(t)
+
+	if rec := do(t, h, "POST", "/api/k8s/nodes/kind-worker/cordon", ""); rec.Code != http.StatusOK {
+		t.Fatalf("cordon: %d %s", rec.Code, rec.Body)
+	}
+	if got := f.last(); got != `PATCH /api/v1/nodes/kind-worker application/merge-patch+json {"spec":{"unschedulable":true}}` {
+		t.Errorf("cordon request: %s", got)
+	}
+	do(t, h, "POST", "/api/k8s/nodes/kind-worker/uncordon", "")
+	if got := f.last(); !strings.HasSuffix(got, `{"spec":{"unschedulable":false}}`) {
+		t.Errorf("uncordon request: %s", got)
+	}
+	if rec := do(t, h, "POST", "/api/k8s/nodes/kind-worker/reboot", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown action: got %d, want 404", rec.Code)
+	}
+
+	rec := do(t, h, "POST", "/api/k8s/nodes/kind-worker/drain", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("drain: %d %s", rec.Code, rec.Body)
+	}
+	res := decode[struct{ Result drainResult }](t, rec).Result
+	// фейк отдаёт все поды: Terminating пропускаем, DaemonSet — skipped, postgres-0 упирается в PDB
+	if !slices.Contains(res.Skipped, "node-agent-x") || slices.Contains(res.Evicted, "kube-demo-abc-2") ||
+		!slices.Contains(res.Evicted, "kube-demo-abc-1") || len(res.Blocked) != 1 ||
+		!strings.Contains(res.Blocked[0], "postgres-0 (PodDisruptionBudget)") {
+		t.Fatalf("drain result: %+v", res)
 	}
 }

@@ -31,6 +31,7 @@ func (s *server) kubeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/k8s/break", s.handleBreakRelease)
 	mux.HandleFunc("POST /api/k8s/undo", s.handleRolloutUndo)
 	mux.HandleFunc("POST /api/k8s/backup", s.handleRunBackup)
+	mux.HandleFunc("POST /api/k8s/nodes/{name}/{action}", s.handleNodeAction)
 
 	mux.HandleFunc("POST /api/snapshots", s.handleCreateSnapshot)
 	mux.HandleFunc("GET /api/snapshots/{id}", s.handleCheckSnapshot)
@@ -256,6 +257,38 @@ func (s *server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		"job":      job,
 		"command":  fmt.Sprintf("kubectl create job %s --from=cronjob/%s", job, backupCronJob),
 	})
+}
+
+// POST /api/k8s/nodes/{name}/cordon|uncordon|drain ≈ kubectl cordon|uncordon|drain <node>
+func (s *server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
+	if !s.requireKube(w) {
+		return
+	}
+	node, action := r.PathValue("name"), r.PathValue("action")
+	resp := map[string]any{"servedBy": s.cfg.PodName, "node": node}
+
+	var err error
+	switch action {
+	case "cordon", "uncordon":
+		err = s.kube.Cordon(r.Context(), node, action == "cordon")
+		resp["command"] = "kubectl " + action + " " + node
+	case "drain":
+		var res drainResult
+		res, err = s.kube.Drain(r.Context(), node)
+		resp["result"] = res
+		resp["command"] = fmt.Sprintf("kubectl drain %s --ignore-daemonsets   # только поды namespace %s: выселено %d, заблокировано %d",
+			node, s.kube.namespace, len(res.Evicted), len(res.Blocked))
+	default:
+		writeError(w, http.StatusNotFound, fmt.Errorf("неизвестное действие %q: cordon | uncordon | drain", action))
+		return
+	}
+	if err != nil {
+		writeKubeError(w, err)
+		return
+	}
+	slog.Warn("node action via API", "node", node, "action", action)
+	s.metrics.action("node_" + action)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ---------- проверка сохранности данных ----------

@@ -7,7 +7,8 @@ URL     ?= http://localhost:30080
 .DEFAULT_GOAL := help
 .PHONY: help up down test run build kind-up kind-down load deploy undeploy status logs watch \
         smoke zero-downtime persistence features v2 metrics-server hpa-on hpa-off \
-        netpol-on netpol-off quota-on quota-off prometheus gateway-install gateway-on backup
+        netpol-on netpol-off quota-on quota-off prometheus gateway-install gateway-on backup \
+        node-down node-up
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -77,6 +78,19 @@ v2: ## Собрать образ 2.0.0 и выкатить его rolling update
 	kubectl -n $(NS) set image deployment/kube-demo app=$(IMAGE):2.0.0
 	kubectl -n $(NS) annotate deployment/kube-demo kubernetes.io/change-cause="image $(IMAGE):2.0.0" --overwrite
 	kubectl -n $(NS) rollout status deployment/kube-demo
+
+# Отказ ноды. docker pause замораживает все процессы ноды kind (и kubelet тоже):
+# для кластера она просто перестаёт отвечать, как при зависании или обрыве сети.
+# unpause возвращает её с тем же IP — в отличие от docker stop/start.
+NODE ?= kube-demo-worker2
+
+node-down: ## Уронить ноду kind (по умолчанию NODE=kube-demo-worker2)
+	docker pause $(NODE)
+	@echo "Нода $(NODE) заморожена. Смотрите карту кластера в UI и: kubectl get nodes,pods -o wide -w"
+
+node-up: ## Вернуть ноду
+	docker unpause $(NODE)
+	kubectl wait --for=condition=Ready node/$(NODE) --timeout=120s
 
 features: ## E2E всех «продвинутых» фич (или одной: make features F=oom)
 	./scripts/features-test.sh $(or $(F),all)

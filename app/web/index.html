@@ -52,6 +52,27 @@
   .chip { font: 12px var(--mono); padding: 4px 6px 2px; border-radius: 5px; color: #fff;
           border-bottom: 4px solid transparent; }
   .chip.err { background: var(--danger); }
+  .nodes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .node { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg);
+          display: flex; flex-direction: column; gap: 8px; min-height: 150px; transition: border-color .3s, opacity .3s; }
+  .node.down { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); }
+  .node.cordoned { border-style: dashed; }
+  .node.pending { border-style: dotted; }
+  .node-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .node-head b { font: 600 13px var(--mono); margin-right: auto; word-break: break-all; }
+  .pill { font: 11px var(--mono); padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+  .pill.ok { color: var(--ok); } .pill.bad { color: var(--danger); } .pill.warn { color: #d97706; }
+  .pill.muted { color: var(--muted); }
+  .taints { font: 11px var(--mono); color: var(--muted); }
+  .pods { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; flex: 1; }
+  .pod-chip { font: 12px var(--mono); padding: 3px 7px; border-radius: 6px; color: #fff; background: #64748b;
+              border: 2px solid transparent; white-space: nowrap; }
+  .pod-chip.notready { border-color: #f59e0b; }
+  .pod-chip.terminating { opacity: .45; text-decoration: line-through; border-style: dashed; border-color: currentColor; }
+  .pod-chip.unknown { outline: 2px dashed var(--danger); outline-offset: 1px; }
+  .pod-chip.me { box-shadow: 0 0 0 2px var(--text); }
+  .node-actions { display: flex; gap: 6px; }
+  .node-actions button { font-size: 12px; padding: 3px 9px; }
   .rps { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
   .rps input[type=range] { width: 160px; accent-color: var(--accent); padding: 0; }
   .rps b { color: var(--text); font-family: var(--mono); min-width: 52px; }
@@ -152,6 +173,16 @@
     <div class="legend" id="legend"></div>
     <div class="note">Каждый квадратик — один запрос к сервису. Цвет — под, полоска снизу — цвет версии
       (видно во время rolling update). Красный — ошибка: во время обновления их быть не должно.</div>
+  </section>
+
+  <section class="card">
+    <h2>Карта кластера <span class="sub">· какие поды на какой ноде</span><span class="spacer"></span>
+      <span class="sub mono" id="mapSummary"></span></h2>
+    <div class="nodes" id="nodeMap"><div class="note">Загрузка…</div></div>
+    <div id="mapBanner" hidden></div>
+    <div class="note">Цветные — поды приложения (как в ленте балансировки), 🐘 — база, ⚙️ — агент DaemonSet'а.
+      Жёлтая рамка — под не Ready, зачёркнутый — Terminating, красный пунктир — нода не отвечает и статус пода неизвестен.
+      Уронить ноду: <code>make node-down</code>, вернуть: <code>make node-up</code>.</div>
   </section>
 
   <section class="card">
@@ -307,7 +338,9 @@ function podColor(name) {
 const shortPod = (name) => name.split("-").pop();
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { cache: "no-store", ...opts });
+  // Тайм-аут: если под на упавшей ноде не отвечает, лучше увидеть ошибку, чем висящий запрос.
+  const res = await fetch(path, { cache: "no-store", signal: AbortSignal.timeout(4000), ...opts })
+    .catch((e) => { throw new Error(e.name === "TimeoutError" ? "таймаут 4 с" : e.message); });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
   return body;
@@ -600,6 +633,7 @@ async function loadCluster() {
       kubeOn = false;
       $("clusterOn").hidden = true;
       $("clusterOff").hidden = false;
+      $("nodeMap").innerHTML = `<div class="note">Карта доступна только внутри Kubernetes.</div>`;
       document.querySelectorAll("[data-kill]").forEach((b) => (b.title = "Доступно только в Kubernetes"));
       return;
     }
@@ -607,6 +641,7 @@ async function loadCluster() {
     return;
   }
   const st = d.state, dep = st.deployment;
+  renderMap(st);
   $("clusterNs").textContent = "namespace: " + st.namespace;
   $("deployName").textContent = dep.name;
   $("deployStatus").textContent =
@@ -682,6 +717,131 @@ async function loadCluster() {
     return tr;
   }));
 }
+
+// ---------- карта кластера ----------
+
+const APP_ICONS = { postgres: "🐘", "node-agent": "⚙️", prometheus: "📈", "postgres-backup": "💾" };
+
+function podChip(p, nodeDown) {
+  const c = document.createElement("span");
+  c.className = "pod-chip";
+  const icon = APP_ICONS[p.app];
+  if (p.app === "kube-demo") {
+    c.style.background = podColor(p.name);
+    c.textContent = shortPod(p.name);
+  } else if (p.app === "kube-demo-canary") {
+    c.style.background = "darkorange";
+    c.textContent = "canary " + shortPod(p.name);
+  } else {
+    c.textContent = (icon ? icon + " " : "") + (p.app === "node-agent" ? "agent" : p.app === "postgres" ? p.name : p.app || p.name);
+  }
+  if (p.status === "Terminating") c.classList.add("terminating");
+  else if (nodeDown) c.classList.add("unknown");
+  else if (!p.podReady && p.status !== "Completed") c.classList.add("notready");
+  if (p.status === "Completed") c.style.opacity = ".5";
+  if (p.name === myPod) c.classList.add("me");
+  c.title = `${p.name}\n${p.status} · READY ${p.ready}${p.podReady ? "" : " · condition Ready=False"}` +
+    `\nнода: ${p.node || "не назначена"}${nodeDown ? " (НЕ ОТВЕЧАЕТ — статус устарел)" : ""}`;
+  return c;
+}
+
+function renderMap(st) {
+  const el = $("nodeMap");
+  if (!st.nodes.length) {
+    el.innerHTML = "";
+    const n = document.createElement("div");
+    n.className = "note";
+    n.textContent = "Нет доступа к нодам" + (st.nodesError ? ": " + st.nodesError : "") + " (нужен ClusterRole kube-demo-nodes).";
+    el.append(n);
+    return;
+  }
+  const byNode = new Map(st.nodes.map((n) => [n.name, []]));
+  const pending = [];
+  for (const p of st.pods) (byNode.get(p.node) || pending).push(p);
+
+  const cards = st.nodes.map((n) => {
+    const down = n.ready !== "True";
+    const card = document.createElement("div");
+    card.className = "node" + (down ? " down" : "") + (n.unschedulable ? " cordoned" : "");
+
+    const head = document.createElement("div");
+    head.className = "node-head";
+    const name = document.createElement("b");
+    name.textContent = n.name;
+    const pill = (text, cls) => { const s = document.createElement("span"); s.className = "pill " + cls; s.textContent = text; return s; };
+    head.append(name, pill(n.role, "muted"),
+      pill(down ? (n.ready === "Unknown" ? "не отвечает" : "NotReady") : "Ready", down ? "bad" : "ok"));
+    if (n.unschedulable) head.append(pill("cordon", "warn"));
+    card.append(head);
+
+    const taints = n.taints.filter((t) => !t.startsWith("node.kubernetes.io/unschedulable"));
+    if (taints.length) {
+      const t = document.createElement("div");
+      t.className = "taints";
+      t.textContent = "taints: " + taints.join(", ");
+      card.append(t);
+    }
+
+    const pods = document.createElement("div");
+    pods.className = "pods";
+    const list = byNode.get(n.name);
+    pods.append(...list.map((p) => podChip(p, down)));
+    if (!list.length) pods.innerHTML = `<span class="taints">пусто</span>`;
+    card.append(pods);
+
+    if (n.role !== "control-plane") {
+      const act = document.createElement("div");
+      act.className = "node-actions";
+      act.append(
+        button(n.unschedulable ? "Uncordon" : "Cordon", () => nodeAction(n.name, n.unschedulable ? "uncordon" : "cordon")),
+        button("Drain", () => nodeAction(n.name, "drain")),
+      );
+      card.append(act);
+    }
+    return card;
+  });
+
+  if (pending.length) {
+    const card = document.createElement("div");
+    card.className = "node pending";
+    card.innerHTML = `<div class="node-head"><b>Не назначены</b><span class="pill warn">Pending</span></div>`;
+    const pods = document.createElement("div");
+    pods.className = "pods";
+    pods.append(...pending.map((p) => podChip(p, false)));
+    card.append(pods);
+    const why = document.createElement("div");
+    why.className = "taints";
+    why.textContent = "Планировщик не нашёл ноду — причина в Events (FailedScheduling).";
+    card.append(why);
+    cards.push(card);
+  }
+  el.replaceChildren(...cards);
+
+  const downNodes = st.nodes.filter((n) => n.ready !== "True");
+  const appPods = st.pods.filter((p) => p.app === "kube-demo" && p.status !== "Terminating");
+  $("mapSummary").textContent = `нод ${st.nodes.length}, из них не Ready: ${downNodes.length} · подов приложения ${appPods.length}`;
+
+  const banner = $("mapBanner");
+  if (downNodes.length) {
+    const names = downNodes.map((n) => n.name).join(", ");
+    const stuck = st.pods.filter((p) => downNodes.some((n) => n.name === p.node) && p.status === "Terminating");
+    banner.className = "banner bad";
+    banner.textContent = `💀 Нода ${names} не отвечает. Kubernetes повесил на неё taint unreachable; ` +
+      `через tolerationSeconds (20 с у приложения) её поды получат Terminating, и Deployment создаст замену на живых нодах. ` +
+      (stuck.some((p) => p.app === "postgres")
+        ? "postgres-0 так и останется в Terminating: StatefulSet не создаст второй экземпляр, пока не уверен, что первый мёртв. "
+        : "") +
+      "Агент DaemonSet'а никуда не переезжает — он «приклеен» к своей ноде.";
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+}
+
+const nodeAction = (node, action) => kubeAction(() => post(`/api/k8s/nodes/${encodeURIComponent(node)}/${action}`))
+  .then((r) => {
+    if (r.result?.blocked?.length) kubectlLog("Не выселены: " + r.result.blocked.join("; "));
+  }).catch(() => {});
 
 function button(text, onclick) {
   const b = document.createElement("button");

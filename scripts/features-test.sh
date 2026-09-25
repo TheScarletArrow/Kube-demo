@@ -177,8 +177,66 @@ gateway() {
   ok "Gateway делит трафик ~80/20, заголовок X-Canary: always ведёт на canary"
 }
 
+# app_pods_table: NODE DELETED READY для каждого пода приложения (<none> = поля нет)
+app_pods_table() {
+  k get pods -l app=kube-demo --no-headers \
+    -o custom-columns='NODE:.spec.nodeName,DEL:.metadata.deletionTimestamp,READY:.status.conditions[?(@.type=="Ready")].status'
+}
+
+node_failure() {
+  echo "→ drain и отказ ноды"
+  pg_node=$(k get pod postgres-0 -o jsonpath='{.spec.nodeName}')
+  victim=$(kubectl get nodes -l '!node-role.kubernetes.io/control-plane' -o name | sed 's#node/##' | grep -vx "$pg_node" | head -1)
+  [ -n "$victim" ] || fail "нет воркера без postgres-0"
+  echo "   жертва: $victim (postgres-0 живёт на $pg_node)"
+
+  # 1. drain через API приложения
+  curl -sf -X POST "$URL/api/k8s/nodes/$victim/drain" | json command
+  retry 120 "поды приложения ушли с $victim" sh -c \
+    "[ \$(kubectl -n $NS get pods -l app=kube-demo --field-selector spec.nodeName=$victim --no-headers 2>/dev/null | wc -l) -eq 0 ]"
+  [ "$(kubectl get node "$victim" -o jsonpath='{.spec.unschedulable}')" = true ] || fail "$victim не в cordon"
+  k rollout status deployment/kube-demo --timeout=120s
+  ok "drain: поды приложения выселены с $victim, нода в cordon"
+
+  # 2. uncordon и перераскатка, чтобы на ноде снова были поды
+  curl -sf -X POST "$URL/api/k8s/nodes/$victim/uncordon" | json command
+  curl -sf -X POST "$URL/api/k8s/restart" >/dev/null
+  k rollout status deployment/kube-demo --timeout=180s
+  on_victim=$(app_pods_table | awk -v v="$victim" '$1==v && $2=="<none>"' | wc -l)
+  echo "   после uncordon на $victim подов приложения: $on_victim"
+  [ "$on_victim" -ge 1 ] || fail "после uncordon на $victim не оказалось подов"
+
+  # 3. роняем ноду
+  docker pause "$victim"
+  trap 'docker unpause "$victim" >/dev/null 2>&1 || true' EXIT
+  start=$(date +%s)
+  retry 150 "нода $victim перестала быть Ready" sh -c \
+    "[ \"\$(kubectl get node $victim -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}')\" != True ]"
+  echo "   $victim NotReady через $(( $(date +%s) - start )) с"
+  contains "$(curl -sf "$URL/api/k8s/state")" "\"name\":\"$victim\",\"role\":\"worker\",\"ready\":\"Unknown\"" \
+    || fail "API приложения не видит, что $victim не отвечает"
+
+  retry 240 "3 Ready-пода приложения на живых нодах" sh -c \
+    "[ \$(kubectl -n $NS get pods -l app=kube-demo --no-headers -o custom-columns='NODE:.spec.nodeName,DEL:.metadata.deletionTimestamp,READY:.status.conditions[?(@.type==\"Ready\")].status' | awk -v v=$victim '\$1!=v && \$2==\"<none>\" && \$3==\"True\"' | wc -l) -ge 3 ]"
+  echo "   замена поднялась через $(( $(date +%s) - start )) с после отказа"
+  k get pods -o wide
+
+  streak=0
+  for _ in $(seq 1 120); do
+    if curl -sf -o /dev/null --max-time 2 "$URL/api/hello"; then streak=$((streak+1)); [ "$streak" -ge 20 ] && break; else streak=0; fi
+    sleep 0.5
+  done
+  [ "$streak" -ge 20 ] || fail "после отказа ноды сервис не стабилен"
+  ok "нода $victim упала, поды переехали, сервис отвечает"
+
+  # 4. возвращаем ноду
+  docker unpause "$victim"; trap - EXIT
+  kubectl wait --for=condition=Ready "node/$victim" --timeout=180s
+  ok "нода $victim вернулась"
+}
+
 case "${1:-all}" in
   all)
-    for f in network_policy sidecar nodes backup resize oom broken_release quota observability gateway; do $f; done ;;
+    for f in network_policy sidecar nodes backup resize oom broken_release quota observability gateway node_failure; do $f; done ;;
   *) "${1//-/_}" ;;
 esac

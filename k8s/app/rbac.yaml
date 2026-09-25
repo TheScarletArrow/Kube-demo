@@ -6,6 +6,8 @@
 #   kubectl scale deployment/kube-demo       -> deployments/scale: patch
 #   kubectl rollout restart|undo             -> deployments: patch, update
 #   kubectl create job --from=cronjob/...    -> cronjobs: get, jobs: create
+#   kubectl drain (поды демки)               -> pods/eviction: create
+#   kubectl get nodes / cordon               -> ClusterRole: nodes get, list, patch
 # Проверить: kubectl auth can-i --list -n kube-demo --as=system:serviceaccount:kube-demo:kube-demo
 apiVersion: v1
 kind: ServiceAccount
@@ -24,6 +26,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "delete"]
+  # kubectl drain: выселение через Eviction API (учитывает PodDisruptionBudget)
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
   # kubectl patch pod --subresource resize (in-place resize)
   - apiGroups: [""]
     resources: ["pods/resize"]
@@ -59,6 +65,35 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: kube-demo
+subjects:
+  - kind: ServiceAccount
+    name: kube-demo
+    namespace: kube-demo
+---
+# Ноды — ресурс уровня кластера, поэтому ClusterRole: смотреть ноды (карта
+# кластера в UI) и cordon/uncordon (patch spec.unschedulable).
+# Это самое «широкое» право демки: не давайте такой ServiceAccount чужим.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-demo-nodes
+  labels:
+    app: kube-demo
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-demo-nodes
+  labels:
+    app: kube-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-demo-nodes
 subjects:
   - kind: ServiceAccount
     name: kube-demo

@@ -98,6 +98,8 @@ jobs:
         run: make features F=observability
       - name: Gateway API + canary
         run: make features F=gateway
+      - name: Drain + node failure
+        run: make features F=node-failure
       - name: Debug info
         if: failure()
         run: |

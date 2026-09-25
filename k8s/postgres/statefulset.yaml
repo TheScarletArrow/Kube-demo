@@ -18,6 +18,21 @@ spec:
         app: postgres
     spec:
       terminationGracePeriodSeconds: 30
+      # Когда нода перестаёт отвечать, она получает taint unreachable/not-ready,
+      # и поды с неё выселяются через tolerationSeconds. По умолчанию это 300 с —
+      # для демо слишком долго, ставим 30 с.
+      # Но под StatefulSet'а, в отличие от Deployment'а, НЕ пересоздаётся, пока
+      # Kubernetes не уверен, что старый мёртв (иначе два postgres-0 писали бы
+      # в один том). Он так и висит в Terminating до возврата ноды.
+      tolerations:
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       securityContext:
         fsGroup: 70 # группа postgres в alpine-образе — чтобы том был доступен на запись
       containers:

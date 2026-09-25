@@ -34,6 +34,18 @@ spec:
       # scale / delete pod / rollout restart (кнопки в UI).
       serviceAccountName: kube-demo
       terminationGracePeriodSeconds: 30
+      # Когда нода перестаёт отвечать, она получает taint unreachable/not-ready,
+      # и поды с неё выселяются через tolerationSeconds. По умолчанию это 300 с —
+      # для демо слишком долго, ставим 20 с.
+      tolerations:
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 20
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 20
       # Стараемся раскидать реплики по разным нодам.
       topologySpreadConstraints:
         - maxSkew: 1
