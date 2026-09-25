@@ -8,7 +8,7 @@ URL     ?= http://localhost:30080
 .PHONY: help up down test run build kind-up kind-down load deploy undeploy status logs watch \
         smoke zero-downtime persistence features v2 metrics-server hpa-on hpa-off \
         netpol-on netpol-off quota-on quota-off prometheus gateway-install gateway-on backup \
-        node-down node-up
+        node-down node-up keda-install rps-autoscale-on rps-autoscale-off
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -129,6 +129,20 @@ gateway-install: ## CRD Gateway API + Traefik (helm) -> http://localhost:30081
 gateway-on: ## Canary-версия + HTTPRoute 80/20
 	kubectl apply -f k8s/extras/gateway/canary.yaml -f k8s/extras/gateway/httproute.yaml
 	kubectl -n $(NS) rollout status deployment/kube-demo-canary --timeout=180s
+
+KEDA_CHART ?= 2.21.0
+
+keda-install: ## KEDA (helm): автоскейлинг по внешним метрикам
+	helm repo add kedacore https://kedacore.github.io/charts
+	helm upgrade --install keda kedacore/keda --version $(KEDA_CHART) -n keda --create-namespace
+	kubectl -n keda rollout status deployment/keda-operator --timeout=180s
+	kubectl -n keda rollout status deployment/keda-operator-metrics-apiserver --timeout=180s
+
+rps-autoscale-on: ## Автоскейлинг по RPS: 10 rps на реплику (нужны make prometheus keda-install)
+	kubectl apply -f k8s/extras/autoscaling/keda-rps.yaml
+
+rps-autoscale-off: ## Выключить автоскейлинг по RPS (реплики останутся как есть)
+	kubectl delete -f k8s/extras/autoscaling/keda-rps.yaml --ignore-not-found
 
 metrics-server: ## Поставить metrics-server в kind (нужен для HPA и kubectl top)
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

@@ -206,6 +206,7 @@
         <button id="undo" title="Вернуть шаблон пода предыдущей ревизии">↩️ Rollout undo</button>
       </div>
       <div id="rolloutBanner" hidden></div>
+      <div class="banner warn mono" id="hpaInfo" hidden></div>
 
       <div class="subhead">ReplicaSets</div>
       <div class="tablewrap"><table class="kt" id="rsTable">
@@ -647,6 +648,15 @@ async function loadCluster() {
   $("deployStatus").textContent =
     `rev ${dep.revision} · desired ${dep.desired} · current ${dep.current} · ready ${dep.ready} · up-to-date ${dep.updated}`;
   if (!replicasDirty) $("replicas").value = dep.desired;
+
+  // Автоскейлинг: HPA (ручной по CPU или созданный KEDA по RPS).
+  const hpas = (st.hpas || []).filter((h) => h.target === dep.name);
+  $("hpaInfo").hidden = !hpas.length;
+  $("hpaInfo").textContent = hpas.map((h) =>
+    `📈 hpa/${h.name}: реплик ${h.current} → ${h.desired} (от ${h.min} до ${h.max}) · ${h.metrics.join(" · ")}` +
+    (h.lastScaleTime ? ` · последнее масштабирование ${age(h.lastScaleTime)} назад` : "")
+  ).join("\n") + (hpas.length ? "\nDeployment управляется HPA: ручной Scale будет перезаписан." : "");
+  $("hpaInfo").style.whiteSpace = "pre-wrap";
 
   // Состояние rollout: застрял ли он (progressDeadlineSeconds) и не сломан ли шаблон.
   const progressing = (dep.conditions || []).find((c) => c.type === "Progressing");

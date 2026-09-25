@@ -106,6 +106,18 @@ func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
 				items = append(items, p)
 			}
 			fmt.Fprintf(w, `{"items":[%s]}`, strings.Join(items, ","))
+		case r.Method == "GET" && r.URL.Path == "/apis/autoscaling/v2/namespaces/demo/horizontalpodautoscalers":
+			fmt.Fprint(w, `{"items":[
+				{"metadata":{"name":"keda-hpa-kube-demo-rps"},
+				 "spec":{"scaleTargetRef":{"name":"kube-demo"},"minReplicas":2,"maxReplicas":8,
+				   "metrics":[{"type":"External","external":{"metric":{"name":"s0-prometheus"},
+				     "target":{"type":"AverageValue","averageValue":"10"}}}]},
+				 "status":{"currentReplicas":4,"desiredReplicas":5,"lastScaleTime":"2026-01-01T00:00:00Z",
+				   "currentMetrics":[{"type":"External","external":{"metric":{"name":"s0-prometheus"},
+				     "current":{"averageValue":"43250m"}}}]}},
+				{"metadata":{"name":"cpu"},"spec":{"scaleTargetRef":{"name":"kube-demo"},"maxReplicas":8,
+				   "metrics":[{"type":"Resource","resource":{"name":"cpu","target":{"type":"Utilization","averageUtilization":50}}},{}]},
+				 "status":{"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":130}}}]}}]}`)
 		case r.Method == "GET" && r.URL.Path == "/api/v1/nodes":
 			fmt.Fprint(w, `{"items":[
 				{"metadata":{"name":"kind-worker"},"spec":{"unschedulable":true},
@@ -499,5 +511,22 @@ func TestCordonAndDrain(t *testing.T) {
 		!slices.Contains(res.Evicted, "kube-demo-abc-1") || len(res.Blocked) != 1 ||
 		!strings.Contains(res.Blocked[0], "postgres-0 (PodDisruptionBudget)") {
 		t.Fatalf("drain result: %+v", res)
+	}
+}
+
+func TestHPAsInState(t *testing.T) {
+	_, h := newKubeTestServer(t)
+	st := decode[struct{ State clusterState }](t, do(t, h, "GET", "/api/k8s/state", "")).State
+	if len(st.HPAs) != 2 {
+		t.Fatalf("hpas: %+v", st.HPAs)
+	}
+	cpu, keda := st.HPAs[0], st.HPAs[1]
+	if keda.Min != 2 || keda.Max != 8 || keda.Current != 4 || keda.Desired != 5 ||
+		len(keda.Metrics) != 1 || keda.Metrics[0] != "s0-prometheus: 43.25 (avg) / 10 (avg)" {
+		t.Errorf("keda hpa: %+v", keda)
+	}
+	// minReplicas по умолчанию 1; пустая метрика не должна ронять разбор
+	if cpu.Min != 1 || len(cpu.Metrics) != 2 || cpu.Metrics[0] != "cpu: 130% / 50%" || cpu.Metrics[1] != "?: ? / ?" {
+		t.Errorf("cpu hpa: %+v", cpu)
 	}
 }

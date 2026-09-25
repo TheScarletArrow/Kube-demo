@@ -1,0 +1,47 @@
+# Автоскейлинг по RPS через KEDA. KEDA сама создаёт и ведёт обычный HPA
+# (keda-hpa-kube-demo-rps), подставляя ему внешнюю метрику из Prometheus.
+#
+# Цель — 10 запросов в секунду на реплику: при 50 rps (ползунок в UI)
+# будет 5 подов, без нагрузки — minReplicaCount.
+#
+#   make prometheus keda-install rps-autoscale-on
+#   kubectl -n kube-demo get scaledobject,hpa -w
+#
+# Не включайте одновременно с k8s/extras/hpa.yaml (HPA по CPU): два HPA
+# на один Deployment будут перетягивать реплики друг у друга.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: kube-demo-rps
+  namespace: kube-demo
+spec:
+  scaleTargetRef:
+    name: kube-demo
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  pollingInterval: 5 # как часто KEDA опрашивает Prometheus
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        # Для демо — быстро вверх и довольно быстро вниз (по умолчанию вниз ждут 5 минут).
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.kube-demo.svc.cluster.local:9090
+        # Суммарный RPS по всем подам приложения (метки app проставляет Prometheus
+        # из labels пода). Пробы и /metrics в счётчик не попадают.
+        query: sum(rate(kube_demo_http_requests_total{app="kube-demo"}[30s])) or vector(0)
+        # AverageValue: желаемое число реплик = ceil(RPS / 10)
+        threshold: "10"

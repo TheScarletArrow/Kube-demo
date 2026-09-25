@@ -355,6 +355,7 @@ type clusterState struct {
 	Jobs        []jobView        `json:"jobs"`
 	CronJob     *cronJobView     `json:"cronJob"`
 	Nodes       []nodeView       `json:"nodes"`
+	HPAs        []hpaView        `json:"hpas"`
 	NodesError  string           `json:"nodesError,omitempty"`
 }
 
@@ -483,6 +484,7 @@ func (c *kubeClient) State(ctx context.Context) (clusterState, error) {
 		Events:      []eventView{},
 		Jobs:        []jobView{},
 		Nodes:       []nodeView{},
+		HPAs:        []hpaView{},
 	}
 
 	var d k8sDeployment
@@ -538,6 +540,9 @@ func (c *kubeClient) State(ctx context.Context) (clusterState, error) {
 	}
 	if jobs, err := c.Jobs(ctx); err == nil {
 		st.Jobs = jobs
+	}
+	if hpas, err := c.HPAs(ctx); err == nil {
+		st.HPAs = hpas
 	}
 	if nodes, err := c.Nodes(ctx); err == nil {
 		st.Nodes = nodes

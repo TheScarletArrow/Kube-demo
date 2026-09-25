@@ -518,6 +518,34 @@ make node-up                                      # нода вернулась,
 (`kubectl delete pod postgres-0 --force --grace-period=0`), но новый под останется `Pending`:
 том `local-path` физически лежит на мёртвой ноде. Хороший повод поговорить о сетевых хранилищах.
 
+### 24. Автоскейлинг по RPS (KEDA)
+
+HPA из п. 11 масштабирует по CPU, но CPU — косвенная метрика. Обычно хочется масштабироваться
+по нагрузке, которую видит бизнес: запросам в секунду. Для этого есть **KEDA**. Она берёт
+метрику из Prometheus и сама создаёт и ведёт обычный HPA.
+
+```bash
+make prometheus keda-install rps-autoscale-on
+kubectl -n kube-demo get scaledobject,hpa -w
+```
+
+Цель — 10 rps на реплику (`k8s/extras/autoscaling/keda-rps.yaml`): желаемое число реплик
+= ⌈суммарный RPS / 10⌉, от 2 до 8. Двигайте ползунок RPS рядом с кнопкой **Live**:
+
+| Ползунок | Реплик |
+|---|---|
+| выкл. / 1–10 rps | 2 (минимум) |
+| 30 rps | 3 |
+| 50 rps | 5 |
+
+В блоке «Кластер» появляется строка HPA: текущий RPS против цели и сколько реплик хочет HPA.
+На карте кластера видно, на каких нодах появляются новые поды. После остановки Live реплики
+возвращаются к двум примерно через минуту (окно стабилизации 30 с плюс окно `rate[30s]`).
+Для нагрузки больше 50 rps: `make watch RPS=100` в нескольких терминалах.
+
+Не включайте одновременно с HPA по CPU (`k8s/extras/hpa.yaml`): два HPA на один Deployment
+будут перетягивать реплики друг у друга. Выключить: `make rps-autoscale-off`.
+
 ## API
 
 | Метод | Путь | Что делает |
@@ -585,7 +613,8 @@ make test                       # юнит-тесты
 2. валидация манифестов `kubeconform`;
 3. **e2e в настоящем kind-кластере**: деплой, `make smoke`, `make zero-downtime`, `make persistence`
    и отдельный шаг на каждую фичу из `make features`: NetworkPolicy, sidecar, DaemonSet, CronJob,
-   resize, OOMKilled, сломанный релиз, квоты, Prometheus, Gateway API, drain и отказ ноды;
+   resize, OOMKilled, сломанный релиз, квоты, Prometheus, автоскейлинг по RPS, Gateway API,
+   drain и отказ ноды;
 4. из `main` и тегов `v*` публикуется multi-arch образ (amd64 + arm64)
    `ghcr.io/thescarletarrow/kube-demo`. Новый пакет в GHCR по умолчанию приватный:
    сделайте его публичным в настройках пакета или добавьте `imagePullSecret`.

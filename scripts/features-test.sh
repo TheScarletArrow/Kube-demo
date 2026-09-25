@@ -177,6 +177,47 @@ gateway() {
   ok "Gateway делит трафик ~80/20, заголовок X-Canary: always ведёт на canary"
 }
 
+replicas() { k get deployment kube-demo -o jsonpath='{.spec.replicas}'; }
+
+rps_autoscale() {
+  echo "→ автоскейлинг по RPS (KEDA + Prometheus)"
+  kubectl apply -f k8s/extras/observability/prometheus.yaml >/dev/null
+  k rollout status deployment/prometheus --timeout=180s
+  helm repo add kedacore https://kedacore.github.io/charts >/dev/null
+  helm upgrade --install keda kedacore/keda --version 2.21.0 -n keda --create-namespace >/dev/null
+  kubectl -n keda rollout status deployment/keda-operator --timeout=180s
+  kubectl -n keda rollout status deployment/keda-operator-metrics-apiserver --timeout=180s
+  kubectl apply -f k8s/extras/autoscaling/keda-rps.yaml
+  retry 120 "KEDA создала HPA" kubectl -n "$NS" get hpa keda-hpa-kube-demo-rps
+  retry 180 "без нагрузки реплик = minReplicaCount (2)" sh -c "[ \"\$(kubectl -n $NS get deployment kube-demo -o jsonpath='{.spec.replicas}')\" = 2 ]"
+  ok "без нагрузки: $(replicas) реплики"
+
+  # ~50 rps: 6 «клиентов» по ~9 запросов в секунду
+  load_pids=""
+  for _ in 1 2 3 4 5 6; do
+    ( while true; do curl -s -o /dev/null --max-time 2 "$URL/api/hello"; sleep 0.1; done ) &
+    load_pids+=" $!"
+  done
+  trap 'kill $load_pids 2>/dev/null || true' EXIT
+  start=$(date +%s)
+  retry 180 "под нагрузкой реплик >= 4" sh -c "[ \$(kubectl -n $NS get deployment kube-demo -o jsonpath='{.spec.replicas}') -ge 4 ]"
+  echo "   под нагрузкой: $(replicas) реплик через $(( $(date +%s) - start )) с"
+  k get hpa keda-hpa-kube-demo-rps
+  state=$(curl -sf "$URL/api/k8s/state")
+  contains "$state" '"name":"keda-hpa-kube-demo-rps"' || fail "API приложения не видит HPA"
+  grep -o '"metrics":\["[^]]*\]' <<<"$state" | head -1
+
+  kill $load_pids 2>/dev/null || true; trap - EXIT
+  start=$(date +%s)
+  retry 240 "после нагрузки реплик снова 2" sh -c "[ \"\$(kubectl -n $NS get deployment kube-demo -o jsonpath='{.spec.replicas}')\" = 2 ]"
+  echo "   нагрузку сняли: 2 реплики через $(( $(date +%s) - start )) с"
+
+  kubectl delete -f k8s/extras/autoscaling/keda-rps.yaml
+  curl -sf -X PUT "$URL/api/k8s/replicas" -d '{"replicas":3}' >/dev/null
+  k rollout status deployment/kube-demo --timeout=180s
+  ok "KEDA масштабирует по RPS: 2 → больше под нагрузкой → снова 2"
+}
+
 # app_pods_table: NODE DELETED READY для каждого пода приложения (<none> = поля нет)
 app_pods_table() {
   k get pods -l app=kube-demo --no-headers \
@@ -237,6 +278,6 @@ node_failure() {
 
 case "${1:-all}" in
   all)
-    for f in network_policy sidecar nodes backup resize oom broken_release quota observability gateway node_failure; do $f; done ;;
+    for f in network_policy sidecar nodes backup resize oom broken_release quota observability rps_autoscale gateway node_failure; do $f; done ;;
   *) "${1//-/_}" ;;
 esac

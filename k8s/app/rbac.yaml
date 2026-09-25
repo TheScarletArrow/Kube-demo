@@ -40,6 +40,10 @@ rules:
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["list"]
+  # HPA (в том числе созданный KEDA) — показать в UI метрику и желаемые реплики
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["list"]
   # resourceNames: управлять можно только своим Deployment'ом, а не любым в namespace.
   # update нужен для rollout undo (запись шаблона предыдущей ревизии).
   - apiGroups: ["apps"]
