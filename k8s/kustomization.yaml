@@ -17,6 +17,9 @@ resources:
   - postgres/secret.yaml
   - postgres/service.yaml
   - postgres/statefulset.yaml
+  - postgres/backup-cronjob.yaml
+  - node-agent/daemonset.yaml
+  - app/rbac.yaml
   - app/configmap.yaml
   - app/deployment.yaml
   - app/service.yaml

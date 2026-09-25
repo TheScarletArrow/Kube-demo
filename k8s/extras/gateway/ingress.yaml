@@ -1,0 +1,21 @@
+# Классический Ingress для сравнения с HTTPRoute: весов нет, только хост/путь.
+# Работает через тот же Traefik (make gateway-install), класс "traefik".
+#   curl -H 'Host: kube-demo.localhost' http://localhost:30081/
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kube-demo
+  namespace: kube-demo
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: kube-demo.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-demo
+                port:
+                  name: http

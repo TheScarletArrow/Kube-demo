@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,6 +19,10 @@ func main() {
 	// JSON-логи в stdout — kubectl logs и любые лог-коллекторы скажут спасибо.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
+	run := run
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		run = runAgent // DaemonSet: тот же образ, другая команда
+	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -34,6 +39,29 @@ func run() error {
 	defer store.Close()
 
 	srv := newServer(cfg, store, os.Exit)
+
+	if cfg.AccessLogPath != "" {
+		if srv.access, err = openAccessLog(cfg.AccessLogPath); err != nil {
+			return fmt.Errorf("open access log: %w", err)
+		}
+		defer srv.access.Close()
+	}
+	if srv.brokenRelease() {
+		slog.Warn("this pod is a BROKEN release: readiness will never pass", "release", cfg.ReleaseState)
+	}
+
+	// Клиент Kubernetes API: работает через токен ServiceAccount пода.
+	kube, err := newInClusterClient(cfg.PodNamespace, cfg.Deployment)
+	switch {
+	case errors.Is(err, errNotInCluster):
+		slog.Info("kubernetes API is not available: not running in a cluster")
+	case err != nil:
+		slog.Warn("kubernetes API is not available", "err", err)
+	default:
+		srv.kube = kube
+		slog.Info("kubernetes API enabled", "namespace", kube.namespace, "deployment", kube.deployment)
+	}
+
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.routes(),

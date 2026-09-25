@@ -1,0 +1,122 @@
+# Blue/green: вторая, «зелёная» версия приложения работает рядом с основной
+# (blue = Deployment kube-demo). Трафик на неё не идёт, пока не переключить
+# selector основного Service kube-demo — кнопкой в UI или make bluegreen-switch.
+#
+#   make bluegreen-on                 # развернуть green и дождаться готовности
+#   kubectl -n kube-demo port-forward svc/kube-demo-green 8081:80   # проверить green ДО переключения
+#   make bluegreen-switch SLOT=green  # весь трафик — на green, разом
+#   make bluegreen-switch SLOT=blue   # мгновенный откат
+#   make bluegreen-off                # вернуть blue и удалить green
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-demo-green
+  namespace: kube-demo
+  labels:
+    app: kube-demo-green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kube-demo-green
+  template:
+    metadata:
+      labels:
+        app: kube-demo-green
+        postgres-access: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: kube-demo # после переключения UI обслуживают эти поды — им нужен тот же доступ
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: kube-demo:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: kube-demo
+          env:
+            - name: APP_COLOR
+              value: seagreen
+            - name: GREETING
+              value: Привет из green
+            - name: APP_VERSION
+              value: 2.0.0-green
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: POSTGRES_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: POSTGRES_DB
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-demo-green
+  namespace: kube-demo
+  labels:
+    app: kube-demo-green
+spec:
+  selector:
+    app: kube-demo-green
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

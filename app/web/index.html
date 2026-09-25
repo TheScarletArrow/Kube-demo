@@ -17,6 +17,7 @@
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  main > *, .grid2 > * { min-width: 0; } /* иначе широкие таблицы распирают колонку */
   header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   header h1 { font-size: 20px; margin: 0 auto 0 0; }
   .badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
@@ -51,6 +52,31 @@
   .chip { font: 12px var(--mono); padding: 4px 6px 2px; border-radius: 5px; color: #fff;
           border-bottom: 4px solid transparent; }
   .chip.err { background: var(--danger); }
+  .nodes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .node { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg);
+          display: flex; flex-direction: column; gap: 8px; min-height: 150px; transition: border-color .3s, opacity .3s; }
+  .node.down { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); }
+  .node.cordoned { border-style: dashed; }
+  .node.pending { border-style: dotted; }
+  .node-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .node-head b { font: 600 13px var(--mono); margin-right: auto; word-break: break-all; }
+  .pill { font: 11px var(--mono); padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+  .pill.ok { color: var(--ok); } .pill.bad { color: var(--danger); } .pill.warn { color: #d97706; }
+  .pill.muted { color: var(--muted); }
+  .taints { font: 11px var(--mono); color: var(--muted); }
+  .pods { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; flex: 1; }
+  .pod-chip { font: 12px var(--mono); padding: 3px 7px; border-radius: 6px; color: #fff; background: #64748b;
+              border: 2px solid transparent; white-space: nowrap; }
+  .pod-chip.notready { border-color: #f59e0b; }
+  .pod-chip.terminating { opacity: .45; text-decoration: line-through; border-style: dashed; border-color: currentColor; }
+  .pod-chip.unknown { outline: 2px dashed var(--danger); outline-offset: 1px; }
+  .pod-chip.me { box-shadow: 0 0 0 2px var(--text); }
+  .node-actions { display: flex; gap: 6px; }
+  .node-actions button { font-size: 12px; padding: 3px 9px; }
+  .rps { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .rps input[type=range] { width: 160px; accent-color: var(--accent); padding: 0; }
+  .rps b { color: var(--text); font-family: var(--mono); min-width: 52px; }
+  .rpsStats { font: 12px var(--mono); color: var(--muted); margin-top: 8px; min-height: 18px; }
   .legend { margin-top: 10px; display: grid; gap: 4px; font-size: 13px; }
   .legend span { font-family: var(--mono); }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
@@ -77,6 +103,33 @@
          margin-top: 12px; min-height: 40px; max-height: 140px; overflow: auto; white-space: pre-wrap; }
   code { font-family: var(--mono); font-size: 12.5px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
   .hints { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+
+  .sub { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .subhead { font-size: 12px; color: var(--muted); margin: 14px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  .mono { font-family: var(--mono); font-size: 13px; }
+  .muted { color: var(--muted); }
+  .num { width: 56px; text-align: center; }
+  .tablewrap { overflow-x: auto; }
+  table.kt { border-collapse: collapse; width: 100%; font: 12.5px/1.5 var(--mono); white-space: nowrap; }
+  .kt th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 12px 3px 0; border-bottom: 1px solid var(--border); }
+  .kt td { padding: 3px 12px 3px 0; border-bottom: 1px dashed var(--border); }
+  .kt tr.me td:first-child::after { content: " ← вы здесь"; color: var(--muted); }
+  .kt tr.dim td { color: var(--muted); }
+  .kt button { font-size: 12px; padding: 1px 8px; }
+  .st-ok { color: var(--ok); } .st-warn { color: #d97706; } .st-bad { color: var(--danger); }
+  .steps { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 13px; }
+  .snap { font: 12.5px/1.6 var(--mono); margin-top: 12px; }
+  .verdict { margin-top: 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); display: none; }
+  .verdict.ok { display: block; border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .verdict.bad { display: block; border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .verdict.wait { display: block; border-color: #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .banner { margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+  .banner.bad { border: 1px solid var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .banner.warn { border: 1px solid #d97706; background: color-mix(in srgb, #d97706 10%, transparent); }
+  .kt td.msg { white-space: normal; min-width: 260px; }
+  .badge.bad { color: var(--danger); border-color: currentColor; }
+  .links a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -85,6 +138,7 @@
     <h1>☸️ Kube Demo</h1>
     <span class="badge" id="version">v?</span>
     <span class="badge" id="storage">storage: ?</span>
+    <span class="badge bad" id="brokenBadge" hidden>сломанный релиз</span>
   </header>
 
   <section class="card hero">
@@ -97,6 +151,8 @@
       <div>Цвет версии<b><span class="swatch"></span><span id="color">-</span></b></div>
       <div>Аптайм пода<b id="uptime">-</b></div>
       <div>Визиты: под / всего<b id="visits">-</b></div>
+      <div title="Так лимиты видит сам контейнер (cgroup). Меняются при in-place resize без рестарта">
+        Лимиты (cgroup)<b id="limits">-</b></div>
     </div>
   </section>
 
@@ -104,14 +160,101 @@
     <h2>Балансировка <span class="spacer"></span>
       <span id="rate" style="text-transform:none;letter-spacing:0"></span></h2>
     <div class="row">
-      <button class="primary" id="live">▶ Live: 2 запроса/с</button>
+      <button class="primary" id="live">▶ Live</button>
+      <label class="rps" title="Сколько запросов в секунду слать к сервису">
+        <input id="rpsRange" type="range" min="1" max="50" step="1" value="2" aria-label="Запросов в секунду">
+        <b id="rpsValue">2 rps</b>
+      </label>
       <button id="once">Один запрос</button>
       <button id="clearFeed">Очистить</button>
     </div>
+    <div class="rpsStats" id="rpsStats"></div>
     <div class="feed" id="feed"></div>
     <div class="legend" id="legend"></div>
     <div class="note">Каждый квадратик — один запрос к сервису. Цвет — под, полоска снизу — цвет версии
       (видно во время rolling update). Красный — ошибка: во время обновления их быть не должно.</div>
+  </section>
+
+  <section class="card">
+    <h2>Карта кластера <span class="sub">· какие поды на какой ноде</span><span class="spacer"></span>
+      <span class="sub mono" id="mapSummary"></span></h2>
+    <div class="nodes" id="nodeMap"><div class="note">Загрузка…</div></div>
+    <div id="mapBanner" hidden></div>
+    <div class="note">Цветные — поды приложения (как в ленте балансировки), 🐘 — база, ⚙️ — агент DaemonSet'а.
+      Жёлтая рамка — под не Ready, зачёркнутый — Terminating, красный пунктир — нода не отвечает и статус пода неизвестен.
+      Уронить ноду: <code>make node-down</code>, вернуть: <code>make node-up</code>.</div>
+  </section>
+
+  <section class="card">
+    <h2>Кластер <span class="sub">· kubectl в браузере</span><span class="spacer"></span>
+      <span class="sub mono" id="clusterNs"></span></h2>
+    <div class="note" id="clusterOff" hidden>Приложение запущено не в Kubernetes: управление кластером недоступно.</div>
+    <div id="clusterOn">
+      <div class="row">
+        <span class="mono">deployment/<b id="deployName">kube-demo</b></span>
+        <span class="mono muted" id="deployStatus"></span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="scaleDown" title="Меньше реплик">−</button>
+        <input id="replicas" class="num" type="number" min="1" max="10" value="3" aria-label="Число реплик">
+        <button id="scaleUp" title="Больше реплик">+</button>
+        <button class="primary" id="scaleApply">Scale</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="restart" title="Пересоздать все поды по одному">🔄 Rollout restart</button>
+        <button class="danger" id="breakRelease"
+          title="Новая ревизия, поды которой никогда не станут Ready. Старые продолжат работать">💣 Выкатить сломанный релиз</button>
+        <button id="undo" title="Вернуть шаблон пода предыдущей ревизии">↩️ Rollout undo</button>
+      </div>
+      <div id="rolloutBanner" hidden></div>
+      <div class="banner warn mono" id="hpaInfo" hidden></div>
+      <div id="bgBox" hidden>
+        <div class="subhead">Blue / green</div>
+        <div class="row">
+          <span class="mono" id="bgStatus"></span>
+          <span class="spacer" style="flex:1"></span>
+          <button id="bgSwitch"></button>
+        </div>
+        <div class="note" id="bgNote"></div>
+      </div>
+
+      <div class="subhead">ReplicaSets</div>
+      <div class="tablewrap"><table class="kt" id="rsTable">
+        <thead><tr><th>NAME</th><th>REVISION</th><th>RELEASE</th><th>DESIRED</th><th>CURRENT</th><th>READY</th><th>AGE</th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="subhead">Pods</div>
+      <div class="tablewrap"><table class="kt" id="podTable">
+        <thead><tr><th>NAME</th><th>READY</th><th>STATUS</th><th>RESTARTS</th><th>LAST</th><th>CPU req/lim</th>
+          <th>AGE</th><th>NODE</th><th></th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="note">CPU ×2 / ÷2 — in-place resize: лимит меняется у живого пода, RESTARTS не растёт,
+        а в карточке сверху (когда ответит этот под) меняется лимит cgroup.</div>
+
+      <div class="subhead">CronJob и Jobs</div>
+      <div class="row">
+        <span class="mono muted" id="cronInfo">—</span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="backupNow" title="kubectl create job --from=cronjob/postgres-backup">💾 Бэкап сейчас</button>
+      </div>
+      <div class="tablewrap"><table class="kt" id="jobTable">
+        <thead><tr><th>NAME</th><th>STATUS</th><th>DURATION</th><th>AGE</th></tr></thead>
+        <tbody></tbody></table></div>
+
+      <div class="subhead">Events</div>
+      <div class="tablewrap"><table class="kt" id="eventTable">
+        <thead><tr><th>AGE</th><th>TYPE</th><th>REASON</th><th>OBJECT</th><th>MESSAGE</th></tr></thead>
+        <tbody></tbody></table></div>
+
+      <div class="log" id="kubectlLog">Каждое действие — запрос приложения к Kubernetes API от имени его ServiceAccount.
+Здесь будет эквивалентная команда kubectl.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Ноды <span class="sub">· DaemonSet node-agent: по агенту на каждой ноде</span></h2>
+    <div class="tablewrap"><table class="kt" id="nodeTable">
+      <thead><tr><th>NODE</th><th>AGENT</th><th>KERNEL</th><th>CPU</th><th>LOAD 1/5/15</th><th>MEM free/total</th><th>UPTIME</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="note" id="nodeNote"></div>
   </section>
 
   <div class="grid2">
@@ -133,14 +276,45 @@
   </div>
 
   <section class="card">
+    <h2>Проверка сохранности данных</h2>
+    <ol class="steps">
+      <li>Напишите пару сообщений в гостевую книгу и сделайте снимок: запомним число сообщений и их SHA-256.</li>
+      <li>Убейте поды: автора снимка, базу <code>postgres-0</code> или всё сразу.</li>
+      <li>Проверка идёт сама каждые 2 секунды, и выполняет её уже другой под.</li>
+    </ol>
+    <div class="row">
+      <button class="primary" id="snapBtn">📸 Сделать снимок</button>
+      <button data-kill="writer" disabled>🗑 Удалить под-автора</button>
+      <button data-kill="db" disabled>🗑 Удалить postgres-0</button>
+      <button data-kill="all" disabled>💣 Пересоздать всё</button>
+    </div>
+    <div class="snap" id="snapInfo"></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="snapLog">Снимка пока нет.</div>
+  </section>
+
+  <section class="card">
     <h2>Хаос-инжиниринг</h2>
     <div class="row">
       <button class="danger" data-chaos="crash" title="Процесс завершится с exit 1">💥 Уронить под</button>
       <button class="danger" data-chaos="sick" title="/healthz начнёт отвечать 500">🤒 Сломать liveness</button>
       <button class="danger" data-chaos="unready" title="/readyz ответит 503 в течение 30 секунд">🙈 Not ready на 30 с</button>
+      <button class="danger" data-chaos="oom" title="Съесть память сверх limits.memory — ядро убьёт контейнер">🧨 OOM: съесть память</button>
       <button data-burn title="Нагрузить CPU пода на 2 секунды">🔥 Нагрузить CPU (2 с)</button>
     </div>
     <div class="log" id="log">Действие применяется к тому поду, который обработает запрос.</div>
+  </section>
+
+  <section class="card hints links">
+    <h2>Наблюдаемость</h2>
+    <div><a href="/metrics" target="_blank">/metrics</a> — метрики этого пода в формате Prometheus</div>
+    <div id="promLinks">Prometheus (<code>make prometheus</code>):
+      <a data-prom="sum by (pod) (rate(kube_demo_http_requests_total[1m]))" target="_blank">RPS по подам</a> ·
+      <a data-prom="histogram_quantile(0.95, sum by (le) (rate(kube_demo_http_request_duration_seconds_bucket[1m])))" target="_blank">p95 латентности</a> ·
+      <a data-prom="sum by (action) (kube_demo_actions_total)" target="_blank">действия из UI</a> ·
+      <a data-prom="up{job=&quot;kube-demo&quot;}" target="_blank">кто жив (up)</a></div>
+    <div><code>kubectl -n kube-demo logs &lt;pod&gt; -c access-log -f</code> — access-лог из sidecar-контейнера</div>
+    <div><code>kubectl -n kube-demo top pods --containers</code> — CPU/память (нужен metrics-server)</div>
   </section>
 
   <section class="card hints">
@@ -154,7 +328,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FEED_SIZE = 60;
+const FEED_SIZE = 80;
+const MAX_IN_FLIGHT = 20; // больше одновременных запросов не шлём, чтобы не копить очередь
 let liveTimer = null;
 const feed = [];
 
@@ -173,13 +348,16 @@ function podColor(name) {
 const shortPod = (name) => name.split("-").pop();
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { cache: "no-store", ...opts });
+  // Тайм-аут: если под на упавшей ноде не отвечает, лучше увидеть ошибку, чем висящий запрос.
+  const res = await fetch(path, { cache: "no-store", signal: AbortSignal.timeout(4000), ...opts })
+    .catch((e) => { throw new Error(e.name === "TimeoutError" ? "таймаут 4 с" : e.message); });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
   return body;
 }
 
 function renderInfo(d) {
+  myPod = d.pod;
   document.documentElement.style.setProperty("--accent", d.color);
   $("greeting").textContent = `${d.greeting}! Этот ответ отдал под`;
   $("pod").textContent = d.pod;
@@ -192,11 +370,22 @@ function renderInfo(d) {
   $("version").textContent = d.version;
   $("storage").textContent = `storage: ${d.storage}`;
   $("storage").className = "badge " + (d.storage === "postgres" ? "pg" : "mem");
+  $("limits").textContent = d.limits ? `CPU ${d.limits.cpu} · RAM ${d.limits.memory}` : "-";
+  $("brokenBadge").hidden = !(d.release || "").startsWith("broken");
 }
 
+let feedDirty = false;
 function pushFeed(item) {
   feed.push(item);
   if (feed.length > FEED_SIZE) feed.shift();
+  // При 50 rps перерисовывать ленту на каждый ответ дорого — не чаще раза за кадр.
+  if (!feedDirty) {
+    feedDirty = true;
+    requestAnimationFrame(() => { feedDirty = false; renderFeed(); });
+  }
+}
+
+function renderFeed() {
   const el = $("feed");
   el.replaceChildren(...feed.map((f) => {
     const c = document.createElement("span");
@@ -235,15 +424,42 @@ function pushFeed(item) {
   $("rate").textContent = `подов в выборке: ${pods}`;
 }
 
+// Статистика Live-режима: ответы за последние 5 секунд.
+const STATS_WINDOW_MS = 5000;
+const samples = []; // { t, ms, ok }
+let inFlight = 0;
+let skipped = 0;
+
 async function hello() {
+  inFlight++;
+  const start = performance.now();
+  let ok = true;
   try {
     const d = await api("/api/hello");
     renderInfo(d);
     pushFeed(d);
   } catch (e) {
+    ok = false;
     pushFeed({ error: e.message });
+  } finally {
+    inFlight--;
+    samples.push({ t: Date.now(), ms: performance.now() - start, ok });
   }
 }
+
+function renderRpsStats() {
+  const now = Date.now();
+  while (samples.length && now - samples[0].t > STATS_WINDOW_MS) samples.shift();
+  if (!liveTimer && !samples.length) { $("rpsStats").textContent = ""; return; }
+  const n = samples.length;
+  const errors = samples.filter((x) => !x.ok).length;
+  const lat = samples.map((x) => x.ms).sort((a, b) => a - b);
+  const p = (q) => (n ? lat[Math.min(n - 1, Math.floor(q * n))].toFixed(0) : "-");
+  $("rpsStats").textContent =
+    `факт: ${(n / (STATS_WINDOW_MS / 1000)).toFixed(1)} rps · p50 ${p(0.5)} мс · p95 ${p(0.95)} мс · ` +
+    `ошибок ${errors}` + (skipped ? ` · пропущено ${skipped} (в полёте было ${MAX_IN_FLIGHT})` : "");
+}
+setInterval(renderRpsStats, 500);
 
 async function loadStats() {
   try {
@@ -298,20 +514,40 @@ function log(line) {
   el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
 }
 
-$("live").onclick = () => {
-  if (liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-    $("live").textContent = "▶ Live: 2 запроса/с";
-    return;
-  }
-  let tick = 0;
+// ---------- Live: настраиваемый RPS ----------
+
+let rps = 2;
+try { rps = Math.min(50, Math.max(1, +localStorage.getItem("kube-demo-rps") || 2)); } catch {}
+$("rpsRange").value = rps;
+$("rpsValue").textContent = `${rps} rps`;
+
+let statsTimer = null;
+function startLive() {
+  clearInterval(liveTimer);
   liveTimer = setInterval(() => {
+    if (inFlight >= MAX_IN_FLIGHT) { skipped++; return; }
     hello();
-    if (++tick % 4 === 0) loadStats();
-    if (tick % 8 === 0) loadMessages();
-  }, 500);
+  }, 1000 / rps);
+  // Статистика и гостевая книга — по времени, а не на каждый запрос.
+  if (!statsTimer) {
+    statsTimer = setInterval(() => { loadStats(); loadMessages(); }, 2000);
+  }
   $("live").textContent = "⏸ Пауза";
+}
+function stopLive() {
+  clearInterval(liveTimer);
+  clearInterval(statsTimer);
+  liveTimer = statsTimer = null;
+  $("live").textContent = "▶ Live";
+}
+
+$("live").onclick = () => (liveTimer ? stopLive() : startLive());
+$("rpsRange").oninput = () => {
+  rps = +$("rpsRange").value;
+  $("rpsValue").textContent = `${rps} rps`;
+  try { localStorage.setItem("kube-demo-rps", rps); } catch {}
+  skipped = 0;
+  if (liveTimer) startLive(); // применяем на лету
 };
 $("once").onclick = () => { hello(); loadStats(); };
 $("clearFeed").onclick = () => {
@@ -350,6 +586,7 @@ document.querySelectorAll("[data-chaos]").forEach((btn) => {
         crash: "упадёт через мгновение — смотрите на RESTARTS",
         sick: "провалит liveness-пробы, и kubelet перезапустит контейнер (~15 с)",
         unready: `будет NOT READY ${r.seconds} с — трафик на него не пойдёт, но и рестарта не будет`,
+        oom: `съедает память при лимите ${r.limits?.memory} — ждите OOMKilled и exit code 137 в колонке LAST`,
       }[action];
       log(`Под ${r.pod} ${what}`);
     } catch (e) {
@@ -367,9 +604,453 @@ document.querySelector("[data-burn]").onclick = async () => {
   }
 };
 
+// ---------- кластер: kubectl в браузере ----------
+
+let kubeOn = true;
+let myPod = "";
+let replicasDirty = false;
+
+function age(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+  if (s < 120) return s + "s";
+  if (s < 7200) return Math.floor(s / 60) + "m";
+  if (s < 172800) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+function statusClass(st) {
+  if (st === "Running" || st === "Completed") return "st-ok";
+  if (/Err|BackOff|Fail|OOM|Unknown/.test(st)) return "st-bad";
+  return "st-warn";
+}
+function cell(text, cls) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (cls) td.className = cls;
+  return td;
+}
+function kubectlLog(line) {
+  const el = $("kubectlLog");
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
+}
+
+async function loadCluster() {
+  if (!kubeOn || document.hidden) return;
+  let d;
+  try {
+    d = await api("/api/k8s/state");
+  } catch (e) {
+    if (/только внутри Kubernetes/.test(e.message)) {
+      kubeOn = false;
+      $("clusterOn").hidden = true;
+      $("clusterOff").hidden = false;
+      $("nodeMap").innerHTML = `<div class="note">Карта доступна только внутри Kubernetes.</div>`;
+      document.querySelectorAll("[data-kill]").forEach((b) => (b.title = "Доступно только в Kubernetes"));
+      return;
+    }
+    $("deployStatus").textContent = "ошибка: " + e.message;
+    return;
+  }
+  const st = d.state, dep = st.deployment;
+  renderMap(st);
+  $("clusterNs").textContent = "namespace: " + st.namespace;
+  $("deployName").textContent = dep.name;
+  $("deployStatus").textContent =
+    `rev ${dep.revision} · desired ${dep.desired} · current ${dep.current} · ready ${dep.ready} · up-to-date ${dep.updated}`;
+  if (!replicasDirty) $("replicas").value = dep.desired;
+
+  renderBlueGreen(st.blueGreen);
+
+  // Автоскейлинг: HPA (ручной по CPU или созданный KEDA по RPS).
+  const hpas = (st.hpas || []).filter((h) => h.target === dep.name);
+  $("hpaInfo").hidden = !hpas.length;
+  $("hpaInfo").textContent = hpas.map((h) =>
+    `📈 hpa/${h.name}: реплик ${h.current} → ${h.desired} (от ${h.min} до ${h.max}) · ${h.metrics.join(" · ")}` +
+    (h.lastScaleTime ? ` · последнее масштабирование ${age(h.lastScaleTime)} назад` : "")
+  ).join("\n") + (hpas.length ? "\nDeployment управляется HPA: ручной Scale будет перезаписан." : "");
+  $("hpaInfo").style.whiteSpace = "pre-wrap";
+
+  // Состояние rollout: застрял ли он (progressDeadlineSeconds) и не сломан ли шаблон.
+  const progressing = (dep.conditions || []).find((c) => c.type === "Progressing");
+  const banner = $("rolloutBanner");
+  if (progressing && progressing.status === "False") {
+    banner.className = "banner bad";
+    banner.textContent = `⛔ Rollout застрял: ${progressing.reason}. Новые поды не становятся Ready, ` +
+      `но старые продолжают обслуживать трафик (maxUnavailable: 0). Лечится Rollout undo.`;
+    banner.hidden = false;
+  } else if ((dep.release || "").startsWith("broken")) {
+    banner.className = "banner warn";
+    banner.textContent = "⏳ Выкатывается сломанный релиз: новые поды не проходят readiness. " +
+      "Через progressDeadlineSeconds (60 с) Deployment пометит rollout как застрявший.";
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+
+  $("rsTable").tBodies[0].replaceChildren(...st.replicaSets.map((rs) => {
+    const tr = document.createElement("tr");
+    if (rs.desired === 0 && rs.current === 0) tr.className = "dim";
+    const broken = (rs.release || "").startsWith("broken");
+    tr.append(cell(rs.name), cell(rs.revision), cell(broken ? "💣 broken" : "ok", broken ? "st-bad" : ""),
+      cell(rs.desired), cell(rs.current), cell(rs.ready), cell(age(rs.createdAt)));
+    return tr;
+  }));
+
+  $("podTable").tBodies[0].replaceChildren(...st.pods.map((p) => {
+    const tr = document.createElement("tr");
+    if (p.name === myPod) tr.className = "me";
+    if (p.status === "Terminating" || p.status === "Completed") tr.classList.add("dim");
+    const name = cell(p.name);
+    name.style.color = p.app === "kube-demo" ? podColor(p.name) : "";
+    const act = document.createElement("td");
+    const alive = p.status !== "Terminating";
+    if ((p.app === "kube-demo" || p.app === "postgres") && alive) {
+      act.append(button("🗑 delete", () => deletePod(p.name)));
+    }
+    if (p.app === "kube-demo" && alive && p.cpu) {
+      const lim = milli(p.cpu.split("/")[1]);
+      act.append(" ", button("CPU ×2", () => resizeCPU(p.name, lim * 2)), " ",
+        button("÷2", () => resizeCPU(p.name, Math.round(lim / 2))));
+    }
+    tr.append(name, cell(p.ready), cell(p.status, statusClass(p.status)), cell(p.restarts),
+      cell(p.last || "", /OOM|Error/.test(p.last) ? "st-bad" : ""),
+      cell((p.cpu || "") + (p.resize ? ` (${p.resize})` : "")),
+      cell(age(p.createdAt)), cell(p.node || "<none>"), act);
+    return tr;
+  }));
+
+  const cj = st.cronJob;
+  $("cronInfo").textContent = cj
+    ? `cronjob/${cj.name} · "${cj.schedule}" · последний успешный: ` +
+      (cj.lastSuccessfulTime ? age(cj.lastSuccessfulTime) + " назад" : "ещё не было")
+    : "CronJob postgres-backup не найден";
+  $("jobTable").tBodies[0].replaceChildren(...st.jobs.slice(0, 5).map((j) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(j.name + (j.manual ? " (вручную)" : "")),
+      cell(j.status, j.status === "Complete" ? "st-ok" : j.status === "Failed" ? "st-bad" : "st-warn"),
+      cell(j.duration || ""), cell(j.startTime ? age(j.startTime) : ""));
+    return tr;
+  }));
+
+  $("eventTable").tBodies[0].replaceChildren(...st.events.slice(0, 10).map((e) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(age(e.time)), cell(e.type, e.type === "Warning" ? "st-bad" : ""), cell(e.reason),
+      cell(e.object), cell(e.message + (e.count > 1 ? ` (×${e.count})` : ""), "msg"));
+    return tr;
+  }));
+}
+
+// ---------- карта кластера ----------
+
+const APP_ICONS = { postgres: "🐘", "node-agent": "⚙️", prometheus: "📈", "postgres-backup": "💾" };
+
+function podChip(p, nodeDown) {
+  const c = document.createElement("span");
+  c.className = "pod-chip";
+  const icon = APP_ICONS[p.app];
+  if (p.app === "kube-demo") {
+    c.style.background = podColor(p.name);
+    c.textContent = shortPod(p.name);
+  } else if (p.app === "kube-demo-green") {
+    c.style.background = "seagreen";
+    c.textContent = "green " + shortPod(p.name);
+  } else if (p.app === "kube-demo-canary") {
+    c.style.background = "darkorange";
+    c.textContent = "canary " + shortPod(p.name);
+  } else {
+    c.textContent = (icon ? icon + " " : "") + (p.app === "node-agent" ? "agent" : p.app === "postgres" ? p.name : p.app || p.name);
+  }
+  if (p.status === "Terminating") c.classList.add("terminating");
+  else if (nodeDown) c.classList.add("unknown");
+  else if (!p.podReady && p.status !== "Completed") c.classList.add("notready");
+  if (p.status === "Completed") c.style.opacity = ".5";
+  if (p.name === myPod) c.classList.add("me");
+  c.title = `${p.name}\n${p.status} · READY ${p.ready}${p.podReady ? "" : " · condition Ready=False"}` +
+    `\nнода: ${p.node || "не назначена"}${nodeDown ? " (НЕ ОТВЕЧАЕТ — статус устарел)" : ""}`;
+  return c;
+}
+
+function renderMap(st) {
+  const el = $("nodeMap");
+  if (!st.nodes.length) {
+    el.innerHTML = "";
+    const n = document.createElement("div");
+    n.className = "note";
+    n.textContent = "Нет доступа к нодам" + (st.nodesError ? ": " + st.nodesError : "") + " (нужен ClusterRole kube-demo-nodes).";
+    el.append(n);
+    return;
+  }
+  const byNode = new Map(st.nodes.map((n) => [n.name, []]));
+  const pending = [];
+  for (const p of st.pods) (byNode.get(p.node) || pending).push(p);
+
+  const cards = st.nodes.map((n) => {
+    const down = n.ready !== "True";
+    const card = document.createElement("div");
+    card.className = "node" + (down ? " down" : "") + (n.unschedulable ? " cordoned" : "");
+
+    const head = document.createElement("div");
+    head.className = "node-head";
+    const name = document.createElement("b");
+    name.textContent = n.name;
+    const pill = (text, cls) => { const s = document.createElement("span"); s.className = "pill " + cls; s.textContent = text; return s; };
+    head.append(name, pill(n.role, "muted"),
+      pill(down ? (n.ready === "Unknown" ? "не отвечает" : "NotReady") : "Ready", down ? "bad" : "ok"));
+    if (n.unschedulable) head.append(pill("cordon", "warn"));
+    card.append(head);
+
+    const taints = n.taints.filter((t) => !t.startsWith("node.kubernetes.io/unschedulable"));
+    if (taints.length) {
+      const t = document.createElement("div");
+      t.className = "taints";
+      t.textContent = "taints: " + taints.join(", ");
+      card.append(t);
+    }
+
+    const pods = document.createElement("div");
+    pods.className = "pods";
+    const list = byNode.get(n.name);
+    pods.append(...list.map((p) => podChip(p, down)));
+    if (!list.length) pods.innerHTML = `<span class="taints">пусто</span>`;
+    card.append(pods);
+
+    if (n.role !== "control-plane") {
+      const act = document.createElement("div");
+      act.className = "node-actions";
+      act.append(
+        button(n.unschedulable ? "Uncordon" : "Cordon", () => nodeAction(n.name, n.unschedulable ? "uncordon" : "cordon")),
+        button("Drain", () => nodeAction(n.name, "drain")),
+      );
+      card.append(act);
+    }
+    return card;
+  });
+
+  if (pending.length) {
+    const card = document.createElement("div");
+    card.className = "node pending";
+    card.innerHTML = `<div class="node-head"><b>Не назначены</b><span class="pill warn">Pending</span></div>`;
+    const pods = document.createElement("div");
+    pods.className = "pods";
+    pods.append(...pending.map((p) => podChip(p, false)));
+    card.append(pods);
+    const why = document.createElement("div");
+    why.className = "taints";
+    why.textContent = "Планировщик не нашёл ноду — причина в Events (FailedScheduling).";
+    card.append(why);
+    cards.push(card);
+  }
+  el.replaceChildren(...cards);
+
+  const downNodes = st.nodes.filter((n) => n.ready !== "True");
+  const appPods = st.pods.filter((p) => p.app === "kube-demo" && p.status !== "Terminating");
+  $("mapSummary").textContent = `нод ${st.nodes.length}, из них не Ready: ${downNodes.length} · подов приложения ${appPods.length}`;
+
+  const banner = $("mapBanner");
+  if (downNodes.length) {
+    const names = downNodes.map((n) => n.name).join(", ");
+    const stuck = st.pods.filter((p) => downNodes.some((n) => n.name === p.node) && p.status === "Terminating");
+    banner.className = "banner bad";
+    banner.textContent = `💀 Нода ${names} не отвечает. Kubernetes повесил на неё taint unreachable; ` +
+      `через tolerationSeconds (20 с у приложения) её поды получат Terminating, и Deployment создаст замену на живых нодах. ` +
+      (stuck.some((p) => p.app === "postgres")
+        ? "postgres-0 так и останется в Terminating: StatefulSet не создаст второй экземпляр, пока не уверен, что первый мёртв. "
+        : "") +
+      "Агент DaemonSet'а никуда не переезжает — он «приклеен» к своей ноде.";
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+}
+
+const nodeAction = (node, action) => kubeAction(() => post(`/api/k8s/nodes/${encodeURIComponent(node)}/${action}`))
+  .then((r) => {
+    if (r.result?.blocked?.length) kubectlLog("Не выселены: " + r.result.blocked.join("; "));
+  }).catch(() => {});
+
+// ---------- blue / green ----------
+
+let bgTarget = "";
+function renderBlueGreen(bg) {
+  // Блок показываем, только когда green развёрнут или трафик сейчас не на blue.
+  const show = bg && (bg.green || bg.active !== "blue");
+  $("bgBox").hidden = !show;
+  if (!show) return;
+  const slot = (name, s, active) =>
+    `${active ? "▶ " : "  "}${name} deploy/${s.deployment} ${s.ready}/${s.desired} ready`;
+  $("bgStatus").textContent =
+    `service/kube-demo → ${bg.active || "?"}   |   ` + slot("🔵 blue", bg.blue, bg.active === "blue") +
+    (bg.green ? "   |   " + slot("🟢 green", bg.green, bg.active === "green") : "   |   🟢 green не развёрнут");
+  bgTarget = bg.active === "green" ? "blue" : "green";
+  const targetReady = bgTarget === "green" ? bg.green?.ready : bg.blue.ready;
+  $("bgSwitch").textContent = bgTarget === "green" ? "🟢 Переключить трафик на green" : "🔵 Вернуть трафик на blue";
+  $("bgSwitch").disabled = !targetReady;
+  $("bgNote").textContent = targetReady
+    ? "Переключение меняет selector сервиса: весь трафик уходит на другую версию разом — смотрите на ленту балансировки. " +
+      "Откат — такое же мгновенное переключение обратно, старая версия всё это время работает."
+    : `Переключаться некуда: в ${bgTarget} нет Ready-подов. Именно для этого blue/green и нужен — проверить новую версию до переключения.`;
+}
+$("bgSwitch").onclick = () => kubeAction(() => post(`/api/k8s/bluegreen/${bgTarget}`)).catch(() => {});
+
+function button(text, onclick) {
+  const b = document.createElement("button");
+  b.textContent = text;
+  b.onclick = onclick;
+  return b;
+}
+function milli(v) {
+  if (!v || v === "-") return 500;
+  return v.endsWith("m") ? parseInt(v) : Math.round(parseFloat(v) * 1000);
+}
+
+async function loadNodes() {
+  if (document.hidden) return;
+  try {
+    const d = await api("/api/nodes");
+    $("nodeTable").tBodies[0].replaceChildren(...d.nodes.map((n) => {
+      const tr = document.createElement("tr");
+      const up = n.uptimeSeconds > 86400 ? Math.floor(n.uptimeSeconds / 86400) + "d" : Math.floor(n.uptimeSeconds / 3600) + "h";
+      tr.append(cell(n.node), cell(n.agent), cell(n.kernel), cell(n.cpus),
+        cell(n.load.map((x) => x.toFixed(2)).join(" / ")), cell(`${n.memAvailableMi} / ${n.memTotalMi} Mi`), cell(up));
+      return tr;
+    }));
+    $("nodeNote").textContent = `Агентов: ${d.nodes.length}. Адреса — из DNS headless-сервиса node-agent, ` +
+      `опросил под ${d.servedBy}.` + (d.error ? " Ошибки: " + d.error : "");
+  } catch (e) {
+    $("nodeNote").textContent = e.message;
+  }
+}
+
+async function kubeAction(fn) {
+  try {
+    const r = await fn();
+    kubectlLog(`$ ${r.command}    (выполнил под ${r.servedBy})`);
+    setTimeout(loadCluster, 300);
+    return r;
+  } catch (e) {
+    kubectlLog("Ошибка: " + e.message);
+    throw e;
+  }
+}
+const post = (path) => api(path, { method: "POST" });
+const deletePod = (name) => kubeAction(() => api(`/api/k8s/pods/${encodeURIComponent(name)}`, { method: "DELETE" }));
+const rolloutRestart = () => kubeAction(() => post("/api/k8s/restart"));
+const resizeCPU = (name, limitMilli) => kubeAction(() => api(`/api/k8s/pods/${encodeURIComponent(name)}/cpu`, {
+  method: "PUT",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ limitMilli: Math.min(2000, Math.max(100, limitMilli)) }),
+})).catch(() => {});
+
+$("replicas").oninput = () => { replicasDirty = true; };
+$("scaleDown").onclick = () => { $("replicas").value = Math.max(1, +$("replicas").value - 1); replicasDirty = true; };
+$("scaleUp").onclick = () => { $("replicas").value = Math.min(10, +$("replicas").value + 1); replicasDirty = true; };
+$("scaleApply").onclick = async () => {
+  await kubeAction(() => api("/api/k8s/replicas", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ replicas: +$("replicas").value }),
+  })).catch(() => {});
+  replicasDirty = false;
+};
+$("restart").onclick = () => rolloutRestart().catch(() => {});
+$("breakRelease").onclick = () => kubeAction(() => post("/api/k8s/break")).catch(() => {});
+$("undo").onclick = () => kubeAction(() => post("/api/k8s/undo")).catch(() => {});
+$("backupNow").onclick = () => kubeAction(() => post("/api/k8s/backup")).catch(() => {});
+
+// Ссылки на Prometheus: тот же хост, NodePort 30090.
+document.querySelectorAll("[data-prom]").forEach((a) => {
+  a.href = `${location.protocol}//${location.hostname}:30090/query?g0.expr=${encodeURIComponent(a.dataset.prom)}&g0.tab=graph&g0.range_input=15m`;
+});
+
+// ---------- проверка сохранности данных ----------
+
+let snapshot = null;
+let lastVerdict = "";
+try { snapshot = JSON.parse(localStorage.getItem("kube-demo-snapshot") || "null"); } catch {}
+
+function snapLog(line) {
+  const el = $("snapLog");
+  if (el.textContent === "Снимка пока нет.") el.textContent = "";
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
+}
+function setVerdict(cls, text) {
+  $("verdict").className = "verdict " + cls;
+  $("verdict").textContent = text;
+  if (text !== lastVerdict) snapLog(text);
+  lastVerdict = text;
+}
+function renderSnapshot() {
+  const has = !!snapshot;
+  document.querySelectorAll("[data-kill]").forEach((b) => (b.disabled = !has || !kubeOn));
+  $("snapInfo").textContent = has
+    ? `Снимок #${snapshot.id}: ${snapshot.messages} сообщ. (id ≤ ${snapshot.maxId}), ` +
+      `sha256 ${snapshot.digest.slice(0, 16)}…, сделал под ${snapshot.pod}`
+    : "";
+}
+
+$("snapBtn").onclick = async () => {
+  try {
+    snapshot = await api("/api/snapshots", { method: "POST" });
+    try { localStorage.setItem("kube-demo-snapshot", JSON.stringify(snapshot)); } catch {}
+    lastVerdict = "";
+    renderSnapshot();
+    snapLog(`📸 Снимок #${snapshot.id} сделал под ${snapshot.pod}: ${snapshot.messages} сообщ.` +
+      (snapshot.messages ? "" : " (гостевая книга пуста — напишите что-нибудь для наглядности)"));
+    checkSnapshot();
+  } catch (e) {
+    snapLog("Не удалось сделать снимок: " + e.message);
+  }
+};
+
+document.querySelectorAll("[data-kill]").forEach((btn) => {
+  btn.onclick = async () => {
+    const what = btn.dataset.kill;
+    try {
+      if (what === "writer") await deletePod(snapshot.pod);
+      if (what === "db") await deletePod("postgres-0");
+      if (what === "all") { await rolloutRestart(); await deletePod("postgres-0"); }
+      snapLog({ writer: `🗑 Удаляем под ${snapshot.pod}, сделавший снимок`,
+                db: "🗑 Удаляем postgres-0 — под с базой",
+                all: "💣 Пересоздаём все поды приложения и базу" }[what]);
+    } catch (e) {
+      snapLog("Не получилось: " + e.message);
+    }
+  };
+});
+
+async function checkSnapshot() {
+  if (!snapshot || document.hidden) return;
+  const res = await fetch(`/api/snapshots/${snapshot.id}`, { cache: "no-store" }).catch((e) => ({ error: e }));
+  if (res.error) return setVerdict("wait", "⏳ Сервис не отвечает — поды пересоздаются, ждём…");
+  const d = await res.json().catch(() => ({}));
+
+  if (res.status === 404) {
+    return setVerdict("bad", `❌ ${d.error}. Проверил под ${d.checkedBy}.`);
+  }
+  if (!res.ok) {
+    return setVerdict("wait", `⏳ Хранилище недоступно (под ${res.headers.get("X-Pod-Name") || "?"}): ждём, пока база поднимется…`);
+  }
+  if (!d.ok) {
+    return setVerdict("bad", `❌ Данные изменились: было ${d.snapshot.messages} сообщ., сейчас ${d.currentMessages}; ` +
+      `контрольная сумма ${d.currentDigest === d.snapshot.digest ? "совпадает" : "НЕ совпадает"}.`);
+  }
+  const writer = d.writerAlive === false
+    ? `его уже нет в кластере`
+    : d.writerAlive === true ? (d.snapshot.pod === d.checkedBy ? "это тот же под" : "он ещё жив") : "";
+  setVerdict("ok", `✅ Данные на месте: ${d.currentMessages} из ${d.snapshot.messages} сообщ., SHA-256 совпадает. ` +
+    `Снимок сделал ${d.snapshot.pod}${writer ? " — " + writer : ""}; проверил ${d.checkedBy}.`);
+}
+
+renderSnapshot();
+setInterval(loadCluster, 2000);
+setInterval(checkSnapshot, 2000);
+setInterval(loadNodes, 5000);
+loadNodes();
+
 hello();
 loadStats();
 loadMessages();
+loadCluster().then(renderSnapshot);
+checkSnapshot();
 </script>
 </body>
 </html>
