@@ -31,7 +31,7 @@ spec:
     matchExpressions:
       - key: app
         operator: In
-        values: ["kube-demo", "kube-demo-canary"]
+        values: ["kube-demo", "kube-demo-canary", "kube-demo-green"]
   policyTypes: ["Ingress"]
   ingress:
     - ports:
@@ -71,7 +71,7 @@ spec:
             matchExpressions:
               - key: app
                 operator: In
-                values: ["kube-demo", "kube-demo-canary"]
+                values: ["kube-demo", "kube-demo-canary", "kube-demo-green"]
       ports:
         - port: 9100
 ---

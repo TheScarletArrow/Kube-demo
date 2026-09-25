@@ -17,6 +17,7 @@ type fakeKube struct {
 	mu       sync.Mutex
 	requests []string // "METHOD path content-type body"
 	pods     map[string]string
+	green    string // JSON деплоймента kube-demo-green; пусто — не развёрнут (404)
 }
 
 const (
@@ -64,6 +65,17 @@ func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
 				"spec":{"replicas":3,"template":{"metadata":{"annotations":{"kube-demo/release":"broken-1"}}}},
 				"status":{"replicas":4,"readyReplicas":2,"updatedReplicas":1,"availableReplicas":2,
 				  "conditions":[{"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}]}}`)
+		case r.Method == "GET" && r.URL.Path == nsApps+"/deployments/kube-demo-green":
+			if f.green == "" {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"message":"deployments.apps \"kube-demo-green\" not found"}`)
+				return
+			}
+			fmt.Fprint(w, f.green)
+		case r.Method == "GET" && r.URL.Path == "/api/v1/namespaces/demo/services/kube-demo":
+			fmt.Fprint(w, `{"spec":{"selector":{"app":"kube-demo"}}}`)
+		case r.Method == "PATCH" && r.URL.Path == "/api/v1/namespaces/demo/services/kube-demo":
+			fmt.Fprint(w, `{}`)
 		case r.Method == "PUT" && r.URL.Path == nsApps+"/deployments/kube-demo":
 			fmt.Fprint(w, `{}`)
 		case r.Method == "GET" && r.URL.Path == nsApps+"/replicasets":
@@ -528,5 +540,43 @@ func TestHPAsInState(t *testing.T) {
 	// minReplicas по умолчанию 1; пустая метрика не должна ронять разбор
 	if cpu.Min != 1 || len(cpu.Metrics) != 2 || cpu.Metrics[0] != "cpu: 130% / 50%" || cpu.Metrics[1] != "?: ? / ?" {
 		t.Errorf("cpu hpa: %+v", cpu)
+	}
+}
+
+func TestBlueGreen(t *testing.T) {
+	f, h := newKubeTestServer(t)
+
+	st := decode[struct{ State clusterState }](t, do(t, h, "GET", "/api/k8s/state", "")).State
+	if bg := st.BlueGreen; bg == nil || bg.Active != "blue" || bg.Blue.Ready != 2 || bg.Green != nil {
+		t.Fatalf("blue/green before green is deployed: %+v", bg)
+	}
+	if rec := do(t, h, "POST", "/api/k8s/bluegreen/green", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("switch to missing green: got %d, want 404", rec.Code)
+	}
+
+	f.mu.Lock()
+	f.green = `{"metadata":{"name":"kube-demo-green"},"spec":{"replicas":2},"status":{"readyReplicas":0}}`
+	f.mu.Unlock()
+	rec := do(t, h, "POST", "/api/k8s/bluegreen/green", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "нет ни одного Ready-пода") {
+		t.Errorf("switch to not ready green: got %d %s, want 409", rec.Code, rec.Body)
+	}
+	if rec := do(t, h, "POST", "/api/k8s/bluegreen/purple", ""); rec.Code != http.StatusConflict {
+		t.Errorf("unknown slot: got %d, want 409", rec.Code)
+	}
+
+	f.mu.Lock()
+	f.green = `{"metadata":{"name":"kube-demo-green"},"spec":{"replicas":2},"status":{"readyReplicas":2}}`
+	f.mu.Unlock()
+	if rec := do(t, h, "POST", "/api/k8s/bluegreen/green", ""); rec.Code != http.StatusOK {
+		t.Fatalf("switch to green: %d %s", rec.Code, rec.Body)
+	}
+	want := `PATCH /api/v1/namespaces/demo/services/kube-demo application/merge-patch+json {"spec":{"selector":{"app":"kube-demo-green"}}}`
+	if got := f.last(); got != want {
+		t.Errorf("request:\n got %s\nwant %s", got, want)
+	}
+	st = decode[struct{ State clusterState }](t, do(t, h, "GET", "/api/k8s/state", "")).State
+	if g := st.BlueGreen.Green; g == nil || g.Ready != 2 || g.Desired != 2 {
+		t.Errorf("green slot: %+v", g)
 	}
 }

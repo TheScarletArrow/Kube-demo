@@ -8,7 +8,8 @@ URL     ?= http://localhost:30080
 .PHONY: help up down test run build kind-up kind-down load deploy undeploy status logs watch \
         smoke zero-downtime persistence features v2 metrics-server hpa-on hpa-off \
         netpol-on netpol-off quota-on quota-off prometheus gateway-install gateway-on backup \
-        node-down node-up keda-install rps-autoscale-on rps-autoscale-off
+        node-down node-up keda-install rps-autoscale-on rps-autoscale-off \
+        bluegreen-on bluegreen-switch bluegreen-off
 
 help: ## Список команд
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -143,6 +144,19 @@ rps-autoscale-on: ## Автоскейлинг по RPS: 10 rps на реплик
 
 rps-autoscale-off: ## Выключить автоскейлинг по RPS (реплики останутся как есть)
 	kubectl delete -f k8s/extras/autoscaling/keda-rps.yaml --ignore-not-found
+
+bluegreen-on: ## Развернуть green-версию рядом с blue (трафик пока на blue)
+	kubectl apply -f k8s/extras/bluegreen/green.yaml
+	kubectl -n $(NS) rollout status deployment/kube-demo-green --timeout=180s
+
+SLOT ?= green
+
+bluegreen-switch: ## Переключить трафик: make bluegreen-switch SLOT=green|blue
+	kubectl -n $(NS) patch svc kube-demo -p '{"spec":{"selector":{"app":"$(if $(filter blue,$(SLOT)),kube-demo,kube-demo-green)"}}}'
+
+bluegreen-off: ## Вернуть трафик на blue и удалить green
+	kubectl -n $(NS) patch svc kube-demo -p '{"spec":{"selector":{"app":"kube-demo"}}}'
+	kubectl delete -f k8s/extras/bluegreen/green.yaml --ignore-not-found
 
 metrics-server: ## Поставить metrics-server в kind (нужен для HPA и kubectl top)
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

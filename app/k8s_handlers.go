@@ -32,6 +32,7 @@ func (s *server) kubeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/k8s/undo", s.handleRolloutUndo)
 	mux.HandleFunc("POST /api/k8s/backup", s.handleRunBackup)
 	mux.HandleFunc("POST /api/k8s/nodes/{name}/{action}", s.handleNodeAction)
+	mux.HandleFunc("POST /api/k8s/bluegreen/{slot}", s.handleSwitchTraffic)
 
 	mux.HandleFunc("POST /api/snapshots", s.handleCreateSnapshot)
 	mux.HandleFunc("GET /api/snapshots/{id}", s.handleCheckSnapshot)

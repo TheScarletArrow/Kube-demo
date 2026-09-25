@@ -207,6 +207,15 @@
       </div>
       <div id="rolloutBanner" hidden></div>
       <div class="banner warn mono" id="hpaInfo" hidden></div>
+      <div id="bgBox" hidden>
+        <div class="subhead">Blue / green</div>
+        <div class="row">
+          <span class="mono" id="bgStatus"></span>
+          <span class="spacer" style="flex:1"></span>
+          <button id="bgSwitch"></button>
+        </div>
+        <div class="note" id="bgNote"></div>
+      </div>
 
       <div class="subhead">ReplicaSets</div>
       <div class="tablewrap"><table class="kt" id="rsTable">
@@ -649,6 +658,8 @@ async function loadCluster() {
     `rev ${dep.revision} · desired ${dep.desired} · current ${dep.current} · ready ${dep.ready} · up-to-date ${dep.updated}`;
   if (!replicasDirty) $("replicas").value = dep.desired;
 
+  renderBlueGreen(st.blueGreen);
+
   // Автоскейлинг: HPA (ручной по CPU или созданный KEDA по RPS).
   const hpas = (st.hpas || []).filter((h) => h.target === dep.name);
   $("hpaInfo").hidden = !hpas.length;
@@ -739,6 +750,9 @@ function podChip(p, nodeDown) {
   if (p.app === "kube-demo") {
     c.style.background = podColor(p.name);
     c.textContent = shortPod(p.name);
+  } else if (p.app === "kube-demo-green") {
+    c.style.background = "seagreen";
+    c.textContent = "green " + shortPod(p.name);
   } else if (p.app === "kube-demo-canary") {
     c.style.background = "darkorange";
     c.textContent = "canary " + shortPod(p.name);
@@ -852,6 +866,30 @@ const nodeAction = (node, action) => kubeAction(() => post(`/api/k8s/nodes/${enc
   .then((r) => {
     if (r.result?.blocked?.length) kubectlLog("Не выселены: " + r.result.blocked.join("; "));
   }).catch(() => {});
+
+// ---------- blue / green ----------
+
+let bgTarget = "";
+function renderBlueGreen(bg) {
+  // Блок показываем, только когда green развёрнут или трафик сейчас не на blue.
+  const show = bg && (bg.green || bg.active !== "blue");
+  $("bgBox").hidden = !show;
+  if (!show) return;
+  const slot = (name, s, active) =>
+    `${active ? "▶ " : "  "}${name} deploy/${s.deployment} ${s.ready}/${s.desired} ready`;
+  $("bgStatus").textContent =
+    `service/kube-demo → ${bg.active || "?"}   |   ` + slot("🔵 blue", bg.blue, bg.active === "blue") +
+    (bg.green ? "   |   " + slot("🟢 green", bg.green, bg.active === "green") : "   |   🟢 green не развёрнут");
+  bgTarget = bg.active === "green" ? "blue" : "green";
+  const targetReady = bgTarget === "green" ? bg.green?.ready : bg.blue.ready;
+  $("bgSwitch").textContent = bgTarget === "green" ? "🟢 Переключить трафик на green" : "🔵 Вернуть трафик на blue";
+  $("bgSwitch").disabled = !targetReady;
+  $("bgNote").textContent = targetReady
+    ? "Переключение меняет selector сервиса: весь трафик уходит на другую версию разом — смотрите на ленту балансировки. " +
+      "Откат — такое же мгновенное переключение обратно, старая версия всё это время работает."
+    : `Переключаться некуда: в ${bgTarget} нет Ready-подов. Именно для этого blue/green и нужен — проверить новую версию до переключения.`;
+}
+$("bgSwitch").onclick = () => kubeAction(() => post(`/api/k8s/bluegreen/${bgTarget}`)).catch(() => {});
 
 function button(text, onclick) {
   const b = document.createElement("button");

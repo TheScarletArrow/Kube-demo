@@ -8,6 +8,7 @@
 #   kubectl create job --from=cronjob/...    -> cronjobs: get, jobs: create
 #   kubectl drain (поды демки)               -> pods/eviction: create
 #   kubectl get nodes / cordon               -> ClusterRole: nodes get, list, patch
+#   kubectl patch svc kube-demo (blue/green) -> services: get, patch
 # Проверить: kubectl auth can-i --list -n kube-demo --as=system:serviceaccount:kube-demo:kube-demo
 apiVersion: v1
 kind: ServiceAccount
@@ -50,6 +51,15 @@ rules:
     resources: ["deployments", "deployments/scale"]
     resourceNames: ["kube-demo"]
     verbs: ["get", "patch", "update"]
+  # Blue/green: смотреть green-версию и переключать selector основного Service
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["kube-demo-green"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["kube-demo"]
+    verbs: ["get", "patch"]
   # CronJob бэкапа: смотреть и запускать вручную (kubectl create job --from=cronjob/...)
   - apiGroups: ["batch"]
     resources: ["cronjobs"]

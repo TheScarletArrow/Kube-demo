@@ -546,6 +546,34 @@ kubectl -n kube-demo get scaledobject,hpa -w
 Не включайте одновременно с HPA по CPU (`k8s/extras/hpa.yaml`): два HPA на один Deployment
 будут перетягивать реплики друг у друга. Выключить: `make rps-autoscale-off`.
 
+### 25. Blue/green
+
+Третья стратегия релиза после rolling update (п. 5) и canary (п. 20). Две полноценные версии
+работают одновременно, а основной Service смотрит только на одну. Переключение — смена
+`selector` у Service: весь трафик уходит на новую версию **разом**, а откат — такое же
+мгновенное переключение обратно, ведь старая версия всё это время жива.
+
+```bash
+make bluegreen-on          # рядом с blue (Deployment kube-demo) поднимается green (2.0.0-green, зелёная)
+kubectl -n kube-demo port-forward svc/kube-demo-green 8081:80   # проверить green ДО переключения
+```
+
+В блоке «Кластер» появляется **Blue / green**: на кого сейчас смотрит `service/kube-demo`,
+сколько Ready-подов у каждой версии, и кнопка переключения. Включите **Live** и нажмите
+**🟢 Переключить трафик на green**: полоска версии в ленте балансировки становится зелёной
+сразу у всех запросов, а не постепенно, как при rolling update. **🔵 Вернуть трафик на blue** —
+мгновенный откат.
+
+Переключиться на green, в котором нет Ready-подов, нельзя (кнопка неактивна, API отвечает 409).
+В этом и смысл blue/green: новую версию проверяют до того, как на неё пойдёт трафик.
+
+```bash
+make bluegreen-switch SLOT=green   # то же из терминала
+make bluegreen-off                 # вернуть blue и удалить green
+```
+
+Цена: на время релиза нужно вдвое больше ресурсов. Canary дешевле, но переключение там постепенное.
+
 ## API
 
 | Метод | Путь | Что делает |
@@ -569,6 +597,7 @@ kubectl -n kube-demo get scaledobject,hpa -w
 | GET | `/api/nodes` | инфо о нодах от агентов DaemonSet'а |
 | POST | `/api/chaos/oom` | есть память, пока ядро не убьёт контейнер (OOMKilled) |
 | GET | `/metrics` | метрики Prometheus |
+| POST | `/api/k8s/bluegreen/{blue\|green}` | переключить selector сервиса на другую версию (409, если в ней нет Ready-подов) |
 | POST | `/api/k8s/nodes/{name}/cordon` · `uncordon` · `drain` | ≈ `kubectl cordon` / `uncordon` / `drain` (drain — только поды демки) |
 | POST | `/api/snapshots` | снимок гостевой книги: число сообщений + SHA-256 |
 | GET | `/api/snapshots/{id}` | сверить текущие данные со снимком |
@@ -613,7 +642,7 @@ make test                       # юнит-тесты
 2. валидация манифестов `kubeconform`;
 3. **e2e в настоящем kind-кластере**: деплой, `make smoke`, `make zero-downtime`, `make persistence`
    и отдельный шаг на каждую фичу из `make features`: NetworkPolicy, sidecar, DaemonSet, CronJob,
-   resize, OOMKilled, сломанный релиз, квоты, Prometheus, автоскейлинг по RPS, Gateway API,
+   resize, OOMKilled, сломанный релиз, квоты, Prometheus, автоскейлинг по RPS, blue/green, Gateway API,
    drain и отказ ноды;
 4. из `main` и тегов `v*` публикуется multi-arch образ (amd64 + arm64)
    `ghcr.io/thescarletarrow/kube-demo`. Новый пакет в GHCR по умолчанию приватный:

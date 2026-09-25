@@ -218,6 +218,54 @@ rps_autoscale() {
   ok "KEDA масштабирует по RPS: 2 → больше под нагрузкой → снова 2"
 }
 
+# served_by_slot <green|blue> — все последние 10 ответов от нужной версии?
+served_by_slot() {
+  local want=$1 pod
+  for _ in $(seq 1 10); do
+    pod=$(curl -s --max-time 2 "$URL/api/hello" | json pod)
+    case "$want:$pod" in
+      green:kube-demo-green-*) ;;
+      blue:kube-demo-green-*) return 1 ;;
+      blue:kube-demo-*) ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+bluegreen() {
+  echo "→ blue/green"
+  kubectl apply -f k8s/extras/bluegreen/green.yaml
+  k rollout status deployment/kube-demo-green --timeout=180s
+
+  # непрерывная нагрузка на всё время переключений — ошибок быть не должно
+  log=$(mktemp)
+  ( while true; do curl -s -o /dev/null --max-time 3 -w '%{http_code}\n' "$URL/api/hello" >>"$log" || true; sleep 0.05; done ) &
+  loader=$!
+  trap 'kill $loader 2>/dev/null || true' EXIT
+  sleep 2
+
+  curl -sf -X POST "$URL/api/k8s/bluegreen/green" | json command
+  retry 30 "весь трафик на green" served_by_slot green
+  ok "трафик переключён на green"
+  curl -sf -X POST "$URL/api/k8s/bluegreen/blue" | json command
+  retry 30 "весь трафик снова на blue" served_by_slot blue
+  ok "откат на blue"
+  sleep 2
+  kill $loader 2>/dev/null || true; trap - EXIT
+  total=$(wc -l <"$log"); errors=$(grep -vc '^200$' "$log" || true)
+  echo "   во время переключений: запросов $total, ошибок $errors"
+  [ "$errors" -eq 0 ] || fail "при переключении blue/green были ошибки"
+
+  # защита: неготовый green не принимает трафик
+  k scale deployment/kube-demo-green --replicas=0
+  retry 60 "green без подов" sh -c "[ -z \"\$(kubectl -n $NS get deployment kube-demo-green -o jsonpath='{.status.readyReplicas}')\" ]"
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/k8s/bluegreen/green")
+  [ "$code" = 409 ] || fail "переключение на пустой green должно давать 409, получили $code"
+  served_by_slot blue || fail "трафик ушёл с blue"
+  kubectl delete -f k8s/extras/bluegreen/green.yaml
+  ok "переключение на неготовый green отклонено (409), трафик остался на blue"
+}
+
 # app_pods_table: NODE DELETED READY для каждого пода приложения (<none> = поля нет)
 app_pods_table() {
   k get pods -l app=kube-demo --no-headers \
@@ -278,6 +326,6 @@ node_failure() {
 
 case "${1:-all}" in
   all)
-    for f in network_policy sidecar nodes backup resize oom broken_release quota observability rps_autoscale gateway node_failure; do $f; done ;;
+    for f in network_policy sidecar nodes backup resize oom broken_release quota observability rps_autoscale bluegreen gateway node_failure; do $f; done ;;
   *) "${1//-/_}" ;;
 esac

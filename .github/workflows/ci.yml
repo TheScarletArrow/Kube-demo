@@ -98,6 +98,8 @@ jobs:
         run: make features F=observability
       - name: Autoscaling by RPS (KEDA)
         run: make features F=rps-autoscale
+      - name: Blue/green
+        run: make features F=bluegreen
       - name: Gateway API + canary
         run: make features F=gateway
       - name: Drain + node failure
