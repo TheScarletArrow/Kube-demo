@@ -52,6 +52,10 @@
   .chip { font: 12px var(--mono); padding: 4px 6px 2px; border-radius: 5px; color: #fff;
           border-bottom: 4px solid transparent; }
   .chip.err { background: var(--danger); }
+  .rps { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .rps input[type=range] { width: 160px; accent-color: var(--accent); padding: 0; }
+  .rps b { color: var(--text); font-family: var(--mono); min-width: 52px; }
+  .rpsStats { font: 12px var(--mono); color: var(--muted); margin-top: 8px; min-height: 18px; }
   .legend { margin-top: 10px; display: grid; gap: 4px; font-size: 13px; }
   .legend span { font-family: var(--mono); }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
@@ -135,10 +139,15 @@
     <h2>Балансировка <span class="spacer"></span>
       <span id="rate" style="text-transform:none;letter-spacing:0"></span></h2>
     <div class="row">
-      <button class="primary" id="live">▶ Live: 2 запроса/с</button>
+      <button class="primary" id="live">▶ Live</button>
+      <label class="rps" title="Сколько запросов в секунду слать к сервису">
+        <input id="rpsRange" type="range" min="1" max="50" step="1" value="2" aria-label="Запросов в секунду">
+        <b id="rpsValue">2 rps</b>
+      </label>
       <button id="once">Один запрос</button>
       <button id="clearFeed">Очистить</button>
     </div>
+    <div class="rpsStats" id="rpsStats"></div>
     <div class="feed" id="feed"></div>
     <div class="legend" id="legend"></div>
     <div class="note">Каждый квадратик — один запрос к сервису. Цвет — под, полоска снизу — цвет версии
@@ -278,7 +287,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FEED_SIZE = 60;
+const FEED_SIZE = 80;
+const MAX_IN_FLIGHT = 20; // больше одновременных запросов не шлём, чтобы не копить очередь
 let liveTimer = null;
 const feed = [];
 
@@ -321,9 +331,18 @@ function renderInfo(d) {
   $("brokenBadge").hidden = !(d.release || "").startsWith("broken");
 }
 
+let feedDirty = false;
 function pushFeed(item) {
   feed.push(item);
   if (feed.length > FEED_SIZE) feed.shift();
+  // При 50 rps перерисовывать ленту на каждый ответ дорого — не чаще раза за кадр.
+  if (!feedDirty) {
+    feedDirty = true;
+    requestAnimationFrame(() => { feedDirty = false; renderFeed(); });
+  }
+}
+
+function renderFeed() {
   const el = $("feed");
   el.replaceChildren(...feed.map((f) => {
     const c = document.createElement("span");
@@ -362,15 +381,42 @@ function pushFeed(item) {
   $("rate").textContent = `подов в выборке: ${pods}`;
 }
 
+// Статистика Live-режима: ответы за последние 5 секунд.
+const STATS_WINDOW_MS = 5000;
+const samples = []; // { t, ms, ok }
+let inFlight = 0;
+let skipped = 0;
+
 async function hello() {
+  inFlight++;
+  const start = performance.now();
+  let ok = true;
   try {
     const d = await api("/api/hello");
     renderInfo(d);
     pushFeed(d);
   } catch (e) {
+    ok = false;
     pushFeed({ error: e.message });
+  } finally {
+    inFlight--;
+    samples.push({ t: Date.now(), ms: performance.now() - start, ok });
   }
 }
+
+function renderRpsStats() {
+  const now = Date.now();
+  while (samples.length && now - samples[0].t > STATS_WINDOW_MS) samples.shift();
+  if (!liveTimer && !samples.length) { $("rpsStats").textContent = ""; return; }
+  const n = samples.length;
+  const errors = samples.filter((x) => !x.ok).length;
+  const lat = samples.map((x) => x.ms).sort((a, b) => a - b);
+  const p = (q) => (n ? lat[Math.min(n - 1, Math.floor(q * n))].toFixed(0) : "-");
+  $("rpsStats").textContent =
+    `факт: ${(n / (STATS_WINDOW_MS / 1000)).toFixed(1)} rps · p50 ${p(0.5)} мс · p95 ${p(0.95)} мс · ` +
+    `ошибок ${errors}` + (skipped ? ` · пропущено ${skipped} (в полёте было ${MAX_IN_FLIGHT})` : "");
+}
+setInterval(renderRpsStats, 500);
 
 async function loadStats() {
   try {
@@ -425,20 +471,40 @@ function log(line) {
   el.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n` + el.textContent;
 }
 
-$("live").onclick = () => {
-  if (liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-    $("live").textContent = "▶ Live: 2 запроса/с";
-    return;
-  }
-  let tick = 0;
+// ---------- Live: настраиваемый RPS ----------
+
+let rps = 2;
+try { rps = Math.min(50, Math.max(1, +localStorage.getItem("kube-demo-rps") || 2)); } catch {}
+$("rpsRange").value = rps;
+$("rpsValue").textContent = `${rps} rps`;
+
+let statsTimer = null;
+function startLive() {
+  clearInterval(liveTimer);
   liveTimer = setInterval(() => {
+    if (inFlight >= MAX_IN_FLIGHT) { skipped++; return; }
     hello();
-    if (++tick % 4 === 0) loadStats();
-    if (tick % 8 === 0) loadMessages();
-  }, 500);
+  }, 1000 / rps);
+  // Статистика и гостевая книга — по времени, а не на каждый запрос.
+  if (!statsTimer) {
+    statsTimer = setInterval(() => { loadStats(); loadMessages(); }, 2000);
+  }
   $("live").textContent = "⏸ Пауза";
+}
+function stopLive() {
+  clearInterval(liveTimer);
+  clearInterval(statsTimer);
+  liveTimer = statsTimer = null;
+  $("live").textContent = "▶ Live";
+}
+
+$("live").onclick = () => (liveTimer ? stopLive() : startLive());
+$("rpsRange").oninput = () => {
+  rps = +$("rpsRange").value;
+  $("rpsValue").textContent = `${rps} rps`;
+  try { localStorage.setItem("kube-demo-rps", rps); } catch {}
+  skipped = 0;
+  if (liveTimer) startLive(); // применяем на лету
 };
 $("once").onclick = () => { hello(); loadStats(); };
 $("clearFeed").onclick = () => {

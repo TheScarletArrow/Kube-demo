@@ -55,8 +55,11 @@ status: ## Поды, сервисы, endpoints, тома
 logs: ## Логи всех реплик разом
 	kubectl -n $(NS) logs -l app=kube-demo -f --prefix --max-log-requests 20
 
-watch: ## Бесконечный curl: видно, какой под отвечает (Ctrl+C — стоп)
-	@while true; do curl -s --max-time 2 $(URL)/ || echo "ERR: нет ответа"; sleep 0.3; done
+RPS ?= 3
+
+watch: ## Бесконечный curl: какой под отвечает (make watch RPS=10; Ctrl+C — стоп)
+	@delay=$$(awk 'BEGIN { printf "%.3f", 1 / $(RPS) }'); \
+	while true; do curl -s --max-time 2 $(URL)/ || echo "ERR: нет ответа"; sleep $$delay; done
 
 # ---------- сценарии ----------
 
